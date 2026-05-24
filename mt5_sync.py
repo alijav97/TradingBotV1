@@ -958,44 +958,53 @@ _YF_SYMBOLS: dict = {
 
 def get_price_for_instrument(instrument: str = "XAUUSD") -> float:
     """
-    Return a live mid-price for the given instrument.
-    Priority: MT5 → yfinance → 0.0 fallback.
+    Get live price for any instrument.
+    Uses yfinance on cloud (Linux), MT5 on Windows.
     Never raises — always returns a float.
     """
-    # XAUUSD delegates to existing full-featured get_live_price()
-    if instrument == "XAUUSD":
-        try:
-            return get_live_price("XAUUSD")["price"]
-        except Exception:
-            return 0.0
+    import sys
+    IS_WINDOWS = sys.platform.startswith("win")
 
-    mt5_symbol = INSTRUMENT_SYMBOLS.get(instrument, instrument)
+    _YF_MAP_LOCAL = {
+        "XAUUSD": "GC=F",
+        "NAS100": "NQ=F",
+        "US30":   "YM=F",
+        "GBPUSD": "GBPUSD=X",
+        "EURUSD": "EURUSD=X",
+        "WTI":    "CL=F",
+    }
 
-    # ── Priority 1: MT5 live tick ─────────────────────────────────────────────
-    if _MT5_LIB and mt5 is not None:
+    # ── Priority 1: MT5 live tick (Windows only) ──────────────────────────────
+    if IS_WINDOWS:
         try:
-            connected, _ = connect_mt5()
-            if connected:
-                tick = mt5.symbol_info_tick(mt5_symbol)
-                if tick is not None and tick.ask > 0 and tick.bid > 0:
-                    return round((tick.bid + tick.ask) / 2, 5)
+            if _MT5_AVAILABLE and mt5 is not None:
+                mt5_sym = INSTRUMENT_SYMBOLS.get(instrument, instrument)
+                connected, _ = connect_mt5()
+                if connected:
+                    tick = mt5.symbol_info_tick(mt5_sym)
+                    if tick is not None and tick.ask > 0 and tick.bid > 0:
+                        return round((tick.bid + tick.ask) / 2, 5)
         except Exception:
             pass
 
-    # ── Priority 2: yfinance ──────────────────────────────────────────────────
-    if _YF_OK and _yf is not None:
-        try:
-            import pandas as _pd_yf2
-            yf_sym = _YF_SYMBOLS.get(instrument, "GC=F")
+    # ── Priority 2: yfinance (always works on cloud) ──────────────────────────
+    try:
+        if _YF_OK and _yf is not None:
+            yf_sym     = _YF_MAP_LOCAL.get(instrument, "GC=F")
             ticker_obj = _yf.Ticker(yf_sym)
-            data = ticker_obj.history(period="1d", interval="1m",
-                                      auto_adjust=True)
+            data       = ticker_obj.history(period="1d", interval="1m",
+                                            auto_adjust=True)
             if data is not None and not data.empty:
                 price = float(data["Close"].iloc[-1])
                 if price > 0:
                     return round(price, 5)
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"[Price] {instrument}: {e}")
 
     return 0.0
+
+
+def get_live_price(instrument: str = "XAUUSD") -> float:  # type: ignore[misc]
+    """Convenience alias for get_price_for_instrument()."""
+    return get_price_for_instrument(instrument)
 

@@ -33,6 +33,8 @@ HIST_CSV      = os.path.join(BASE_DIR, "data", "historical_xauusd.csv")
 DATA_DIR      = os.path.join(BASE_DIR, "data")
 SETTINGS_FILE = os.path.join(DATA_DIR, "user_settings.json")
 GST           = timezone(timedelta(hours=4))
+import platform as _platform
+IS_CLOUD      = _platform.system() != "Windows"  # Railway/Linux = cloud
 
 # ── Debug logger ──────────────────────────────────────────────────────────────
 try:
@@ -5321,6 +5323,153 @@ def _handle_reversals(_msg: str) -> str:
 #  Sidebar
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _render_home() -> None:
+    """Render the home screen with quick-action buttons and glossary."""
+    st.markdown("# 🤖 TradingBotV1")
+    _active_instr = st.session_state.get("instrument", "XAUUSD")
+    st.markdown(
+        f"**Trading {_active_instr}** — signals, strategies, risk"
+    )
+
+    # Live price card
+    try:
+        from mt5_sync import get_price_for_instrument as _gpfi_home
+        _home_price = _gpfi_home(_active_instr)
+        if _home_price and _home_price > 0:
+            st.success(f"💰 Live Price: **${_home_price:,.4f}**")
+        else:
+            st.warning("Price loading…")
+    except Exception:
+        pass
+
+    st.markdown("---")
+
+    # ── Row 1: Quick Actions ─────────────────────────────────────────────────
+    st.markdown("### ⚡ Quick Actions")
+    _hc1, _hc2, _hc3 = st.columns(3)
+    with _hc1:
+        if st.button("🔧 Setup", use_container_width=True, key="home_setup"):
+            st.session_state["pending_cmd"] = "run setup"
+    with _hc2:
+        if st.button("📊 Analyze", use_container_width=True, key="home_analyze"):
+            st.session_state["pending_cmd"] = f"analyze {_active_instr.lower()}"
+    with _hc3:
+        if st.button("🎯 Signals", use_container_width=True, key="home_signals"):
+            st.session_state["pending_cmd"] = "show signals"
+
+    _hc4, _hc5, _hc6 = st.columns(3)
+    with _hc4:
+        if st.button("📰 News", use_container_width=True, key="home_news"):
+            st.session_state["pending_cmd"] = "news today"
+    with _hc5:
+        if st.button("💰 Risk Guide", use_container_width=True, key="home_risk"):
+            st.session_state["pending_cmd"] = "risk guide"
+    with _hc6:
+        if st.button("📈 Backtest", use_container_width=True, key="home_bt"):
+            st.session_state["pending_cmd"] = "backtest"
+
+    # ── Row 2: ML Brain ───────────────────────────────────────────────────────
+    st.markdown("### 🧠 ML Brain")
+    _hc7, _hc8, _hc9 = st.columns(3)
+    with _hc7:
+        if st.button("🤖 ML Suggest", use_container_width=True, key="home_ml"):
+            st.session_state["pending_cmd"] = "ml suggest"
+    with _hc8:
+        if st.button("🏆 Best Signal", use_container_width=True, key="home_best"):
+            st.session_state["pending_cmd"] = "best signal"
+    with _hc9:
+        if st.button("📋 Why Analysis", use_container_width=True, key="home_why"):
+            st.session_state["pending_cmd"] = "why analysis"
+
+    # ── Row 3: Paper Trading ───────────────────────────────────────────────
+    st.markdown("### 📝 Paper Trading")
+    _hc10, _hc11, _hc12 = st.columns(3)
+    with _hc10:
+        if st.button("📄 My Trades", use_container_width=True, key="home_trades"):
+            st.session_state["pending_cmd"] = "paper trades"
+    with _hc11:
+        if st.button("📊 Results", use_container_width=True, key="home_results"):
+            st.session_state["pending_cmd"] = "paper results"
+    with _hc12:
+        if st.button("🤖 Auto Status", use_container_width=True, key="home_auto"):
+            st.session_state["pending_cmd"] = "auto status"
+
+    # ── Row 4: Market Context ──────────────────────────────────────────────
+    st.markdown("### 🌍 Market Context")
+    _hc13, _hc14, _hc15 = st.columns(3)
+    with _hc13:
+        if st.button("💹 Sector Flow", use_container_width=True, key="home_sector"):
+            st.session_state["pending_cmd"] = "sector rotation"
+    with _hc14:
+        if st.button("📊 Open Interest", use_container_width=True, key="home_oi"):
+            st.session_state["pending_cmd"] = "open interest"
+    with _hc15:
+        if st.button("🌐 Macro Bias", use_container_width=True, key="home_macro"):
+            st.session_state["pending_cmd"] = "macro analysis"
+
+    st.markdown("---")
+
+    # ── Glossary ───────────────────────────────────────────────────────────────
+    st.markdown("### 📖 Command Glossary")
+    with st.expander("📊 Analysis Commands", expanded=False):
+        st.markdown("""
+| Command | What it does |
+|---|---|
+| `analyze gold` | Full XAUUSD analysis |
+| `show signals` | All passing signals |
+| `market read` | Plain English market view |
+| `key levels` | Support & resistance |
+| `reversal` | Reversal setups |
+| `indicators` | 14 technical indicators |
+""")
+    with st.expander("🧠 ML Commands", expanded=False):
+        st.markdown("""
+| Command | What it does |
+|---|---|
+| `ml suggest` | ML quality assessment |
+| `best signal` | ML picks best setup |
+| `ml insights` | Win/loss patterns |
+| `train ml` | Retrain ML model |
+| `full brain report` | Brain 1 + 2 combined |
+""")
+    with st.expander("📝 Paper Trading", expanded=False):
+        st.markdown("""
+| Command | What it does |
+|---|---|
+| `paper long` | Open LONG paper trade |
+| `paper short` | Open SHORT paper trade |
+| `paper trades` | See all open trades |
+| `close paper [ID]` | Close a trade |
+| `paper results` | Performance report |
+| `daily summary` | Today's P&L |
+""")
+    with st.expander("🌍 Market Context", expanded=False):
+        st.markdown("""
+| Command | What it does |
+|---|---|
+| `sector rotation` | Money flow by sector |
+| `open interest` | Volume signal |
+| `macro analysis` | Economic health score |
+| `cot data` | Institutional positioning |
+| `liquidity` | BSL/SSL levels |
+| `session handoff` | Asian/London/NY bias |
+| `news today` | Economic calendar |
+| `fundamental bias` | Why gold is moving |
+""")
+    with st.expander("⚙️ System Commands", expanded=False):
+        st.markdown("""
+| Command | What it does |
+|---|---|
+| `run setup` | Load all data |
+| `price check` | Live price |
+| `risk guide` | Position sizing |
+| `backtest` | Run strategy backtest |
+| `wfo` | Walk-forward optimization |
+| `instrument rules` | Hard rules check |
+| `help` | Full command list |
+""")
+
+
 def _render_sidebar(account: float) -> None:
     import time as _time
     with st.sidebar:
@@ -5570,76 +5719,79 @@ def _render_sidebar(account: float) -> None:
         st.divider()
 
         # ── MT5 ACCOUNT (live) ────────────────────────────────────────────────
-        acct      = st.session_state.get("mt5_account")
-        connected = st.session_state.get("mt5_connected", False)
-        today_pnl = st.session_state.get("mt5_today_pnl")
-        sync_time = st.session_state.get("mt5_last_sync")
-
-        if connected and acct:
-            pnl_val  = (today_pnl or {}).get("pnl", 0.0)
-            pnl_sign = "+" if pnl_val >= 0 else ""
-            pnl_col  = "#1D9E75" if pnl_val >= 0 else "#E05555"
-            wins     = (today_pnl or {}).get("wins",   0)
-            losses   = (today_pnl or {}).get("losses", 0)
-            n_trades = (today_pnl or {}).get("trades", 0)
-            st.markdown("**ACCOUNT** *(live from MT5)*")
-            st.markdown(
-                f"Balance:&nbsp;&nbsp;**${acct['balance']:,.2f}**  "
-                f"\nEquity:&nbsp;&nbsp;&nbsp;&nbsp;**${acct['equity']:,.2f}**  "
-                f"\nFree margin: **${acct['margin_free']:,.2f}**"
-            )
-            st.markdown(
-                f"Today P&L: <span style='color:{pnl_col};font-weight:700'>"
-                f"{pnl_sign}${pnl_val:,.2f}</span>  "
-                f"({wins}W / {losses}L, {n_trades} trades)",
-                unsafe_allow_html=True,
-            )
-            sync_str = sync_time.strftime("%H:%M GST") if sync_time else "—"
-            st.caption(f"MT5 #{acct['account']} · {acct['currency']} · 1:{acct['leverage']}  · synced {sync_str}")
+        if IS_CLOUD:
+            st.info("🌐 **Cloud Mode** — MT5 not available.  \nPrices via yfinance.", icon="ℹ️")
         else:
-            st.warning(
-                "**MT5 offline**  \n"
-                "Open MetaTrader 5 and log in  \n"
-                "to sync live data",
-                icon="⚠️",
-            )
-            _mt5_err = st.session_state.get("mt5_error")
-            if _mt5_err:
-                st.caption(f"Error: {_mt5_err}")
-            st.caption(
-                "**To fix:** MT5 → Tools → Options → Expert Advisors "
-                "→ ✅ Allow algorithmic trading"
-            )
+            acct      = st.session_state.get("mt5_account")
+            connected = st.session_state.get("mt5_connected", False)
+            today_pnl = st.session_state.get("mt5_today_pnl")
+            sync_time = st.session_state.get("mt5_last_sync")
 
-        # ── Sync MT5 button ───────────────────────────────────────────────────
-        if _MT5_SYNC_OK:
-            sb1, sb2 = st.columns(2)
-            with sb1:
-                if st.button("🔁 Sync MT5", key="sb_mt5_sync", use_container_width=True):
-                    with st.spinner("Connecting to MT5…"):
-                        _refresh_mt5_data()
-                    if st.session_state.get("mt5_connected"):
-                        try:
-                            new_n, total_n = sync_to_journal(days_back=30)
-                            if new_n:
-                                st.success(f"✅ Connected! {new_n} new trade(s) synced.")
-                                st.session_state["trigger_cmd"] = f"__mt5_sync_done_{new_n}_{total_n}"
-                            else:
-                                st.success("✅ MT5 Connected! Journal up to date.")
-                        except Exception as _je:
-                            st.success("✅ MT5 Connected!")
-                            st.caption(f"Journal sync: {_je}")
-                    else:
-                        _btn_err = st.session_state.get("mt5_error", "Unknown error")
-                        st.error(
-                            f"❌ Still offline\n\n"
-                            f"`{_btn_err}`\n\n"
-                            "Make sure MT5 is running and logged in."
-                        )
-                    st.rerun()
-            with sb2:
-                if st.button("📒 Journal", key="sb_journal", use_container_width=True):
-                    st.session_state["trigger_cmd"] = "show journal"
+            if connected and acct:
+                pnl_val  = (today_pnl or {}).get("pnl", 0.0)
+                pnl_sign = "+" if pnl_val >= 0 else ""
+                pnl_col  = "#1D9E75" if pnl_val >= 0 else "#E05555"
+                wins     = (today_pnl or {}).get("wins",   0)
+                losses   = (today_pnl or {}).get("losses", 0)
+                n_trades = (today_pnl or {}).get("trades", 0)
+                st.markdown("**ACCOUNT** *(live from MT5)*")
+                st.markdown(
+                    f"Balance:&nbsp;&nbsp;**${acct['balance']:,.2f}**  "
+                    f"\nEquity:&nbsp;&nbsp;&nbsp;&nbsp;**${acct['equity']:,.2f}**  "
+                    f"\nFree margin: **${acct['margin_free']:,.2f}**"
+                )
+                st.markdown(
+                    f"Today P&L: <span style='color:{pnl_col};font-weight:700'>"
+                    f"{pnl_sign}${pnl_val:,.2f}</span>  "
+                    f"({wins}W / {losses}L, {n_trades} trades)",
+                    unsafe_allow_html=True,
+                )
+                sync_str = sync_time.strftime("%H:%M GST") if sync_time else "—"
+                st.caption(f"MT5 #{acct['account']} · {acct['currency']} · 1:{acct['leverage']}  · synced {sync_str}")
+            else:
+                st.warning(
+                    "**MT5 offline**  \n"
+                    "Open MetaTrader 5 and log in  \n"
+                    "to sync live data",
+                    icon="⚠️",
+                )
+                _mt5_err = st.session_state.get("mt5_error")
+                if _mt5_err:
+                    st.caption(f"Error: {_mt5_err}")
+                st.caption(
+                    "**To fix:** MT5 → Tools → Options → Expert Advisors "
+                    "→ ✅ Allow algorithmic trading"
+                )
+
+            # ── Sync MT5 button ───────────────────────────────────────────────
+            if _MT5_SYNC_OK:
+                sb1, sb2 = st.columns(2)
+                with sb1:
+                    if st.button("🔁 Sync MT5", key="sb_mt5_sync", use_container_width=True):
+                        with st.spinner("Connecting to MT5…"):
+                            _refresh_mt5_data()
+                        if st.session_state.get("mt5_connected"):
+                            try:
+                                new_n, total_n = sync_to_journal(days_back=30)
+                                if new_n:
+                                    st.success(f"✅ Connected! {new_n} new trade(s) synced.")
+                                    st.session_state["trigger_cmd"] = f"__mt5_sync_done_{new_n}_{total_n}"
+                                else:
+                                    st.success("✅ MT5 Connected! Journal up to date.")
+                            except Exception as _je:
+                                st.success("✅ MT5 Connected!")
+                                st.caption(f"Journal sync: {_je}")
+                        else:
+                            _btn_err = st.session_state.get("mt5_error", "Unknown error")
+                            st.error(
+                                f"❌ Still offline\n\n"
+                                f"`{_btn_err}`\n\n"
+                                "Make sure MT5 is running and logged in."
+                            )
+                        st.rerun()
+                with sb2:
+                    if st.button("📒 Journal", key="sb_journal", use_container_width=True):
+                        st.session_state["trigger_cmd"] = "show journal"
 
         st.divider()
 
@@ -5684,6 +5836,50 @@ def _render_sidebar(account: float) -> None:
                 )
             st.session_state["mt5_sync_notifications"] = []
             st.divider()
+
+        # ── Auto Trader panel ─────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### 🤖 Auto Trader")
+        try:
+            from auto_trader import (
+                start_auto_trader as _at_start,
+                stop_auto_trader  as _at_stop,
+                get_status        as _at_get_status,
+            )
+            _at = _at_get_status()
+            _at_running = _at.get("enabled", False)
+            if _at_running:
+                st.success("🟢 ACTIVE — scanning 60s")
+            else:
+                st.error("🔴 STOPPED")
+            _atc1, _atc2 = st.columns(2)
+            with _atc1:
+                _at_lbl = "⏹️ STOP" if _at_running else "▶️ START"
+                if st.button(_at_lbl, key="at_sidebar_btn",
+                             use_container_width=True):
+                    if _at_running:
+                        _at_stop()
+                    else:
+                        _at_start()
+                    st.rerun()
+            with _atc2:
+                st.metric("Trades", _at.get("total_trades", 0))
+            for _at_instr, _at_d in _at.get("instruments", {}).items():
+                _at_done = _at_d.get("trades_today", 0)
+                _at_open = _at_d.get("has_open", False)
+                _at_pnl  = _at_d.get("daily_pnl", 0)
+                _at_icon = ("🔄" if _at_open else "✅" if _at_done >= 2
+                            else f"⬜{_at_done}/2")
+                _at_ps   = f"+{_at_pnl:.1f}%" if _at_pnl > 0 else f"{_at_pnl:.1f}%"
+                st.markdown(f"{_at_icon} **{_at_instr}** {_at_ps}")
+            _at_dp = _at.get("daily_pnl", 0)
+            st.markdown("**Day P&L:** "
+                        + ("🟢" if _at_dp >= 0 else "🔴")
+                        + f" {_at_dp:+.1f}%")
+            st.caption(f"Last scan: {_at.get('last_scan', 'Never')}")
+        except Exception as _at_e:
+            st.warning("Auto trader loading...")
+            st.caption(f"Error: {str(_at_e)[:60]}")
 
         # ── Bot status items ──────────────────────────────────────────────────
         rules_n  = st.session_state["rules_count"]  or 610
@@ -6332,14 +6528,19 @@ def main() -> None:
     _active_instr = st.session_state.get("instrument", "XAUUSD")
     st.caption(f"Trading {_active_instr} — signals, strategies, risk — or use the sidebar buttons.")
 
-    # Welcome on first load
+    # Welcome on first load — show home screen with buttons and glossary
     if not st.session_state["messages"]:
-        _add_bot_msg(
-            "👋 **TradingBotV1 ready.**\n\n"
-            "I find the setups — you place the trades.\n\n"
-            "Start with **`run setup`** or ask me anything about gold.\n\n"
-            "**Try:**  `run setup`  ·  `analyze gold`  ·  `show signals`  ·  `news today`"
-        )
+        _render_home()
+
+    # Handle pending_cmd from home screen buttons
+    if "pending_cmd" in st.session_state:
+        _pcmd = st.session_state.pop("pending_cmd")
+        if _pcmd:
+            _add_user_msg(_pcmd)
+            with st.spinner("Analyzing market conditions..."):
+                _presp = _route(_pcmd, account)
+            _add_bot_msg(_presp)
+            st.rerun()
 
     # Handle sidebar button trigger (set in _render_sidebar)
     trigger = st.session_state.pop("trigger_cmd", None)

@@ -745,6 +745,73 @@ def get_at_status() -> dict:
     }
 
 
+def get_status() -> dict:
+    """Alias for get_at_status() — used by sidebar."""
+    state = load_state()
+    today = datetime.now(GST).strftime("%Y-%m-%d")
+
+    instr_data = {}
+    total_pnl  = 0.0
+    total_trades = 0
+    for instr in INSTRUMENTS:
+        key   = f"{instr}_{today}"
+        done  = state.get("trades_today", {}).get(key, 0)
+        trades = load_trades(instr)
+        open_t = any(
+            t.get("status") == "OPEN" and t.get("auto_trade")
+            for t in trades
+        )
+        today_closed = [
+            t for t in trades
+            if t.get("auto_trade") and t.get("status") == "CLOSED"
+            and today in str(t.get("closed_at", ""))
+        ]
+        pnl = sum(t.get("pnl_pct", 0) for t in today_closed)
+        total_pnl    += pnl
+        total_trades += done
+        instr_data[instr] = {
+            "trades_today": done,
+            "has_open":     open_t,
+            "daily_pnl":    round(pnl, 2),
+        }
+
+    last_scan = state.get("last_tick")
+    if last_scan:
+        try:
+            _dt = datetime.fromisoformat(last_scan)
+            last_scan = _dt.strftime("%H:%M GST")
+        except Exception:
+            pass
+
+    return {
+        "enabled":       state.get("enabled", False),
+        "running":       state.get("running", False),
+        "total_trades":  total_trades,
+        "daily_pnl":     round(total_pnl, 2),
+        "instruments":   instr_data,
+        "last_scan":     last_scan or "Never",
+        "open_trades":   len(state.get("open_trades", [])),
+    }
+
+
+def start_auto_trader() -> None:
+    """Enable the auto trader (sets enabled=True in state)."""
+    state = load_state()
+    state["enabled"]    = True
+    state["started_at"] = datetime.now(GST).isoformat()
+    log_activity(state, "▶️ Auto trader STARTED via UI", "SYSTEM")
+    save_state(state)
+
+
+def stop_auto_trader() -> None:
+    """Disable the auto trader (sets enabled=False in state)."""
+    state = load_state()
+    state["enabled"] = False
+    state["running"] = False
+    log_activity(state, "⏹️ Auto trader STOPPED via UI", "SYSTEM")
+    save_state(state)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main loop
 # ─────────────────────────────────────────────────────────────────────────────
