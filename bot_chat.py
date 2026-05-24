@@ -403,10 +403,11 @@ _init_state()
 
 _SETTINGS_DEFAULTS: dict = {
     "balance":               1000,
-    "risk_pct":              1,
-    "reward_pct":            3,
+    "risk_pct":              2.0,
+    "risk_per_trade":        0.02,
+    "reward_pct":            6.0,
     "min_rr":                3.0,
-    "leverage":              20,
+    "leverage":              10,
     "partial_tp":            True,
     "min_confidence":        6.0,
     "daily_loss_limit_pct":  10,
@@ -414,6 +415,15 @@ _SETTINGS_DEFAULTS: dict = {
     "max_open_trades":       3,
     "sessions":              ["London", "NewYork", "Overlap"],
     "min_volume_ratio":      0.5,
+}
+
+INSTRUMENT_RISK_CONFIG: dict = {
+    "XAUUSD":  {"grade": "A", "priority": 1, "sl_pct": 0.8,  "tp_pct": 2.4,  "leverage": 10},
+    "WTI":     {"grade": "B", "priority": 2, "sl_pct": 1.2,  "tp_pct": 3.6,  "leverage": 10},
+    "US30":    {"grade": "B", "priority": 3, "sl_pct": 0.71, "tp_pct": 2.13, "leverage": 10},
+    "NAS100":  {"grade": "B", "priority": 4, "sl_pct": 0.65, "tp_pct": 1.94, "leverage": 10},
+    "GBPUSD":  {"grade": "C", "priority": 5, "sl_pct": 0.2,  "tp_pct": 0.6,  "leverage": 10},
+    "EURUSD":  {"grade": "C", "priority": 6, "sl_pct": 0.2,  "tp_pct": 0.6,  "leverage": 10},
 }
 
 
@@ -708,10 +718,10 @@ def _load_settings() -> dict:
         return _ls()
     except Exception:
         return {
-            "balance": 300, "risk_pct": 10, "risk_usd": 30,
-            "reward_pct": 30, "reward_usd": 90, "min_rr": 3.0,
-            "leverage": 20, "partial_tp": True, "min_confidence": 7.5,
-            "max_risk_usd": 30,
+            "balance": 1000, "risk_pct": 2.0, "risk_per_trade": 0.02,
+            "risk_usd": 20, "reward_pct": 6.0, "reward_usd": 60, "min_rr": 3.0,
+            "leverage": 10, "partial_tp": True, "min_confidence": 7.5,
+            "max_risk_usd": 20,
         }
 
 def _lot_size(account: float, risk_pct: float, sl_dollar: float) -> float:
@@ -6218,21 +6228,29 @@ def _render_sidebar(account: float) -> None:
         _s = _load_settings()
         _bal  = float(_s.get("balance",   1000))
         _rpct = float(_s.get("risk_pct",  2.0))
-        _rusd = float(_s.get("risk_usd",  _bal * _rpct / 100))
+        _rusd = _bal * _rpct / 100
         _rr   = float(_s.get("min_rr",    3.0))
-        _lev  = float(_s.get("leverage",  10))
-        _rewp = float(_s.get("reward_pct", _rpct * _rr))
         st.markdown("**⚙️ Risk Settings** *(from user_settings.json)*")
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.metric("Balance",  f"${_bal:,.0f}")
-            st.metric("Risk/trade", f"{_rpct:.0f}%  (${_rusd:.0f})")
-        with col_b:
-            st.metric("Min R:R",  f"1:{_rr:.0f}")
-            st.metric("Leverage", f"{_lev:.0f}×")
-        st.caption(f"Max reward/trade: {_rewp:.0f}%  (${_bal*_rewp/100:.0f})")
+        st.markdown(f"💰 **Balance:** ${_bal:,.0f}")
+        st.markdown(f"🎯 **Risk/trade:** {_rpct:.0f}% = ${_rusd:.0f}")
+        st.markdown(f"⚖️ **Min R:R:** 1:{_rr:.0f}")
         # Keep session_state in sync so callers see current balance
         st.session_state["account_balance"] = _bal
+
+        st.markdown("**⚙️ Risk Config by Instrument**")
+        for _irc_name, _irc in sorted(
+                INSTRUMENT_RISK_CONFIG.items(),
+                key=lambda x: x[1]["priority"]):
+            _irc_sl_usd = _bal * _irc["sl_pct"] / 100
+            _irc_tp_usd = _bal * _irc["tp_pct"] / 100
+            _irc_grade  = _irc["grade"]
+            _irc_lev    = _irc["leverage"]
+            _grade_icon = "🏅" if _irc_grade == "A" else ("🥈" if _irc_grade == "B" else "🥉")
+            st.markdown(
+                f"{_grade_icon} **{_irc_name}** [Grade {_irc_grade}]  \n"
+                f"    SL: {_irc['sl_pct']}% = ${_irc_sl_usd:.0f}  |  "
+                f"TP: {_irc['tp_pct']}% = ${_irc_tp_usd:.0f}  |  "
+                f"{_irc_lev}x leverage")
 
         # ── Spread monitor ─────────────────────────────────────────────
         try:

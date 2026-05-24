@@ -166,6 +166,7 @@ INSTRUMENTS: dict[str, dict] = {
 ACCOUNT_BALANCE: float = 1000.0
 LEVERAGE:        int   = 10
 RR_RATIO:        float = 3.0
+RISK_PER_TRADE:  float = 0.02   # 2% risk per trade
 
 NEWS_BLACKOUT: dict[str, list] = {
     "GBPUSD": [(1, 10, 2), (2, 10, 2)],

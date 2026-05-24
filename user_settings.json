@@ -1,6 +1,7 @@
 {
     "balance": 1000,
     "risk_pct": 2.0,
+    "risk_per_trade": 0.02,
     "leverage": 10,
     "min_rr": 3.0,
     "sl_type": "adaptive_atr",
