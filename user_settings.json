@@ -1,0 +1,11 @@
+{
+    "balance": 1000,
+    "risk_pct": 2.0,
+    "leverage": 10,
+    "min_rr": 3.0,
+    "sl_type": "adaptive_atr",
+    "atr_sl_mult": 1.5,
+    "atr_tp_mult": 4.5,
+    "max_trades_per_day": 2,
+    "account_currency": "USD"
+}

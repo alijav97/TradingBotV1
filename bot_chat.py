@@ -3554,114 +3554,92 @@ def _handle_trade_outcome(msg: str) -> str:
 #  Sessions command handler
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _handle_price_check(_msg: str) -> str:
-    _gst_pc  = timezone(timedelta(hours=4))
-    now_uae  = datetime.now(_gst_pc)
-    _instr   = st.session_state.get("instrument", "XAUUSD")
-
-    # ── XAUUSD fast path via existing live-price cache ────────────────────────
-    if _instr == "XAUUSD":
-        lp      = _get_live_price()
-        _price  = lp.get("price") or 0.0
-        _bid    = lp.get("bid")   or 0.0
-        _ask    = lp.get("ask")   or 0.0
-        _spread = lp.get("spread") or 0.0
-        _src    = lp.get("source", "unavailable")
-        _age    = lp.get("age_seconds", 99999)
-        _warn   = lp.get("stale_warning", "")
-        _src_labels = {
-            "MT5":         "✅ MT5 (real broker feed)",
-            "yfinance_1m": "⚠ yfinance (MT5 unavailable)",
-            "yfinance":    "⚠ yfinance (MT5 unavailable)",
-            "cache":       "⚠ Cached price",
-            "CSV_STALE":   "🚨 STALE CSV data",
-            "unavailable": "🚨 No price source",
+def _handle_price_check(msg=""):
+    try:
+        import yfinance as yf
+        instr = st.session_state.get(
+            "instrument", "XAUUSD")
+        YF = {
+            "XAUUSD": "GC=F",
+            "NAS100": "NQ=F",
+            "US30":   "YM=F",
+            "GBPUSD": "GBPUSD=X",
+            "EURUSD": "EURUSD=X",
+            "WTI":    "CL=F",
         }
-        _src_label = _src_labels.get(_src, f"⚠ {_src}")
-        _warn_line = f"  ⚠ {_warn}\n" if _warn else ""
-        return (
-            f"```\n"
-            f"{'═'*42}\n"
-            f"  LIVE PRICE CHECK — XAUUSD\n"
-            f"{'═'*42}\n"
-            f"  UAE Time : {now_uae.strftime('%I:%M %p')}\n"
-            f"  UAE Date : {now_uae.strftime('%A %d %B %Y')}\n"
-            f"{'─'*42}\n"
-            f"  XAUUSD   : ${_price:,.2f}\n"
-            f"  Bid      : ${_bid:,.2f}\n"
-            f"  Ask      : ${_ask:,.2f}\n"
-            f"  Spread   : ${_spread:.2f}\n"
-            f"  Source   : {_src_label}\n"
-            f"  Age      : {_age}s\n"
-            f"  Is Live  : {lp.get('is_live', False)}\n"
-            f"{_warn_line}"
-            f"{'─'*42}\n"
-            f"  Session  : {get_session_summary_line() if _WS_OK else _current_session()}\n"
-            f"{'═'*42}\n"
-            f"```"
-        )
+        ticker = YF.get(instr, "GC=F")
+        tk     = yf.Ticker(ticker)
+        hist   = tk.history(
+            period="2d", interval="5m")
 
-    # ── All other instruments via instrument_data ─────────────────────────────
-    s      = _get_instr_summary(_instr)
-    _price = s.get("price", 0.0)
-    _src   = s.get("source", "unavailable")
-    _err   = s.get("error", "")
+        if hist.empty:
+            st.warning(
+                f"⏳ {instr} — market closed "
+                f"or data unavailable")
+            return
 
-    _chg_abs = s.get("change_abs", 0.0)
-    _chg_pct = s.get("change_pct", 0.0)
-    _chg_sym = "▲" if _chg_abs >= 0 else "▼"
+        price  = float(hist["Close"].iloc[-1])
+        open_p = float(hist["Open"].iloc[0])
+        high   = float(hist["High"].max())
+        low    = float(hist["Low"].min())
+        change = price - open_p
+        pct    = (change / open_p) * 100
+        arrow  = "🟢 ▲" if change >= 0 else "🔴 ▼"
 
-    _wk_hi = s.get("week_high", 0.0)
-    _wk_lo = s.get("week_low", 0.0)
-    _hi    = s.get("high", 0.0)
-    _lo    = s.get("low", 0.0)
-    _open  = s.get("open", 0.0)
+        st.markdown(
+            f"## 💰 {instr} Live Price")
 
-    _dxy   = s.get("dxy", None)
-    _vix   = s.get("vix", None)
-    _us10y = s.get("us10y", None)
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Current Price",
+            f"${price:,.4f}",
+            delta=f"{change:+.4f} "
+                  f"({pct:+.2f}%)")
+        c2.metric("Day High",
+                  f"${high:,.4f}")
+        c3.metric("Day Low",
+                  f"${low:,.4f}")
 
-    def _fmt(v: float, decimals: int = 5) -> str:
-        return f"{v:,.{decimals}f}" if v else "—"
+        st.markdown(
+            f"**Source:** yfinance "
+            f"({ticker}) | "
+            f"{arrow} {abs(pct):.2f}% today")
 
-    _price_fmt   = _fmt(_price,   2 if _instr in ("XAUUSD","NAS100","US30","WTI") else 5)
-    _open_fmt    = _fmt(_open,    2 if _instr in ("XAUUSD","NAS100","US30","WTI") else 5)
-    _hi_fmt      = _fmt(_hi,      2 if _instr in ("XAUUSD","NAS100","US30","WTI") else 5)
-    _lo_fmt      = _fmt(_lo,      2 if _instr in ("XAUUSD","NAS100","US30","WTI") else 5)
-    _wk_hi_fmt   = _fmt(_wk_hi,   2 if _instr in ("XAUUSD","NAS100","US30","WTI") else 5)
-    _wk_lo_fmt   = _fmt(_wk_lo,   2 if _instr in ("XAUUSD","NAS100","US30","WTI") else 5)
+        # Adaptive SL/TP display
+        try:
+            from auto_trader import (
+                calculate_adaptive_sl_tp,
+                INSTRUMENTS)
+            if instr in INSTRUMENTS:
+                sl, tp, sl_pct, tp_pct = (
+                    calculate_adaptive_sl_tp(
+                        instr, price, "LONG"))
+                acc_r = round(
+                    sl_pct * 10 * 100, 1)
+                acc_p = round(
+                    tp_pct * 10 * 100, 1)
+                st.markdown("---")
+                st.markdown(
+                    "**📊 Adaptive SL/TP "
+                    "at 10x leverage:**")
+                c4, c5, c6 = st.columns(3)
+                c4.metric(
+                    "🛑 Stop Loss",
+                    f"${sl:,.4f}",
+                    delta=f"-{acc_r}% account",
+                    delta_color="inverse")
+                c5.metric(
+                    "🎯 Take Profit",
+                    f"${tp:,.4f}",
+                    delta=f"+{acc_p}% account")
+                c6.metric(
+                    "⚖️ RR Ratio", "1:3")
+        except:
+            pass
 
-    _ctx_lines = ""
-    if _dxy   is not None: _ctx_lines += f"  DXY      : {_dxy:.3f}\n"
-    if _vix   is not None: _ctx_lines += f"  VIX      : {_vix:.2f}\n"
-    if _us10y is not None: _ctx_lines += f"  US10Y    : {_us10y:.3f}%\n"
-    if _err:               _ctx_lines += f"  ⚠ Error  : {_err}\n"
-
-    return (
-        f"```\n"
-        f"{'═'*42}\n"
-        f"  LIVE PRICE CHECK — {_instr}\n"
-        f"{'═'*42}\n"
-        f"  UAE Time : {now_uae.strftime('%I:%M %p')}\n"
-        f"  UAE Date : {now_uae.strftime('%A %d %B %Y')}\n"
-        f"{'─'*42}\n"
-        f"  Price    : {_price_fmt}\n"
-        f"  Open     : {_open_fmt}\n"
-        f"  High(1h) : {_hi_fmt}\n"
-        f"  Low(1h)  : {_lo_fmt}\n"
-        f"  Change   : {_chg_sym} {abs(_chg_abs):.5f}  ({_chg_pct:+.3f}%)\n"
-        f"{'─'*42}\n"
-        f"  5d High  : {_wk_hi_fmt}\n"
-        f"  5d Low   : {_wk_lo_fmt}\n"
-        f"{'─'*42}\n"
-        f"  Source   : {_src}\n"
-        f"  Fetched  : {s.get('fetched_at','—')}\n"
-        f"{'─'*42}\n"
-        f"{_ctx_lines}"
-        f"  Session  : {get_session_summary_line() if _WS_OK else _current_session()}\n"
-        f"{'═'*42}\n"
-        f"```"
-    )
+    except Exception as e:
+        st.error(
+            f"Price check error: {str(e)}")
 
 
 def _handle_macro_analysis(_msg: str) -> str:
