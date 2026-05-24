@@ -766,13 +766,17 @@ def get_status() -> dict:
             if t.get("auto_trade") and t.get("status") == "CLOSED"
             and today in str(t.get("closed_at", ""))
         ]
+        wins_today   = [t for t in today_closed if t.get("outcome") == "TP_HIT"]
+        losses_today = [t for t in today_closed if t.get("outcome") == "SL_HIT"]
         pnl = sum(t.get("pnl_pct", 0) for t in today_closed)
         total_pnl    += pnl
         total_trades += done
         instr_data[instr] = {
-            "trades_today": done,
-            "has_open":     open_t,
-            "daily_pnl":    round(pnl, 2),
+            "trades_today":  done,
+            "has_open":      open_t,
+            "daily_pnl":     round(pnl, 2),
+            "wins_today":    len(wins_today),
+            "losses_today":  len(losses_today),
         }
 
     last_scan = state.get("last_tick")

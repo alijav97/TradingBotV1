@@ -1658,6 +1658,7 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _handle_setup(_msg: str) -> str:
+    instrument = st.session_state.get("instrument", "XAUUSD")
     # 1. Rules
     rules  = _load_rules()
     n_rules = len(rules)
@@ -1772,6 +1773,7 @@ def _handle_setup(_msg: str) -> str:
         f"{SEP}\n"
         f"  SYSTEM STATUS\n"
         f"{SEP}\n"
+        f"  Instrument:   {instrument} H1\n"
         f"  Rules:        {n_rules} loaded ✓\n"
         f"  Playbooks:    {n_pb} active ✓\n"
         f"  SMC engine:   {online('smart')}\n"
@@ -1785,13 +1787,17 @@ def _handle_setup(_msg: str) -> str:
         f"  {overall_note}\n"
         f"{DASH}\n"
         f"  DXY: {dxy_line}\n"
-        f"  Gold correlation: {gold_corr}\n"
+    )
+    if instrument == "XAUUSD":
+        out += f"  Gold correlation: {gold_corr}\n"
+    out += (
         f"{DASH}\n"
         f"  SESSION: {sess}\n"
         f"  News: {news_line}\n"
         f"{SEP}\n"
         f"```\n"
-        f"✅ Setup complete. Type `gold` to analyse XAUUSD or `signals` for all setups."
+        f"✅ Setup complete for **{instrument}**. "
+        f"Type `analyze {instrument.lower()}` or `signals` for all setups."
     )
     return out
 
@@ -5857,18 +5863,48 @@ def _render_sidebar(account: float) -> None:
                     st.rerun()
             with _atc2:
                 st.metric("Trades", _at.get("total_trades", 0))
-            for _at_instr, _at_d in _at.get("instruments", {}).items():
-                _at_done = _at_d.get("trades_today", 0)
-                _at_open = _at_d.get("has_open", False)
-                _at_pnl  = _at_d.get("daily_pnl", 0)
-                _at_icon = ("🔄" if _at_open else "✅" if _at_done >= 2
-                            else f"⬜{_at_done}/2")
-                _at_ps   = f"+{_at_pnl:.1f}%" if _at_pnl > 0 else f"{_at_pnl:.1f}%"
-                st.markdown(f"{_at_icon} **{_at_instr}** {_at_ps}")
-            _at_dp = _at.get("daily_pnl", 0)
-            st.markdown("**Day P&L:** "
-                        + ("🟢" if _at_dp >= 0 else "🔴")
-                        + f" {_at_dp:+.1f}%")
+            # Per instrument detailed view
+            _at_total_pnl = 0.0
+            for _at_instr in [
+                    "XAUUSD", "WTI", "US30",
+                    "NAS100", "GBPUSD", "EURUSD"]:
+                _at_d      = _at.get("instruments", {}).get(_at_instr, {})
+                _at_done   = _at_d.get("trades_today", 0)
+                _at_open   = _at_d.get("has_open", False)
+                _at_pnl    = _at_d.get("daily_pnl", 0.0)
+                _at_total_pnl += _at_pnl
+                if _at_open:
+                    _at_status = "🔄"
+                elif _at_done >= 2:
+                    _at_status = "✅"
+                else:
+                    _at_status = "⬜"
+                _at_pnl_color = (
+                    "🟢" if _at_pnl > 0
+                    else "🔴" if _at_pnl < 0
+                    else "⚪")
+                _at_dollar = abs(_at_pnl / 100 * 1000)
+                _at_dollar_str = (
+                    f"+${_at_dollar:.0f}" if _at_pnl >= 0
+                    else f"-${_at_dollar:.0f}")
+                st.markdown(
+                    f"{_at_status} **{_at_instr}** "
+                    f"{_at_done}/2 trades | "
+                    f"{_at_pnl_color} {_at_pnl:+.1f}% "
+                    f"({_at_dollar_str})")
+            st.markdown("---")
+            _at_tot_dollar = abs(_at_total_pnl / 100 * 1000)
+            _at_tot_color = (
+                "🟢" if _at_total_pnl > 0
+                else "🔴" if _at_total_pnl < 0
+                else "⚪")
+            _at_tot_sign = (
+                f"+${_at_tot_dollar:.0f}" if _at_total_pnl >= 0
+                else f"-${_at_tot_dollar:.0f}")
+            st.markdown(
+                f"**📊 Today Total:** "
+                f"{_at_tot_color} {_at_total_pnl:+.1f}% "
+                f"({_at_tot_sign})")
             st.caption(f"Last scan: {_at.get('last_scan', 'Never')}")
         except Exception as _at_e:
             st.warning("Auto trader loading...")
