@@ -4164,8 +4164,8 @@ def _handle_indicators(_msg: str) -> str:
         f"({'above' if vw.get('above') else 'below'}) | {vw.get('bias','')}",
 
         f"{_vote_emoji(sq.get('bias',''))} **Squeeze:** "
-        f"{'\ud83d\udd25 FIRED' if sq.get('squeeze_off') else '⚡ BUILDING' if sq.get('squeeze_on') else 'Normal'} "
-        f"| {sq.get('bias','')}",
+        + ("🔥 FIRED" if sq.get('squeeze_off') else "⚡ BUILDING" if sq.get('squeeze_on') else "Normal")
+        + f" | {sq.get('bias','')}",
 
         f"{_vote_emoji(su.get('bias',''))} **Supertrend:** ${su.get('supertrend', 0):,.2f} "
         f"| {su.get('trend','')}"
@@ -4174,7 +4174,7 @@ def _handle_indicators(_msg: str) -> str:
         f"{_vote_emoji(km.get('bias',''))} **Adaptive MA (KAMA):** "
         f"${km.get('kama', 0):,.2f} | {km.get('bias','')}",
 
-        f"{'\ud83c\udfaf' if kz.get('in_killzone') else '⚪'} **ICT Kill Zone:** {kz_active}\n"
+        ("🎯" if kz.get('in_killzone') else "⚪") + f" **ICT Kill Zone:** {kz_active}\n"
         f"   Next: {kz_next}",
 
         f"{_vote_emoji(wy.get('bias',''))} **Wyckoff:** "
@@ -4777,16 +4777,16 @@ def _handle_scalp(_msg: str) -> str:
         lines.append(
             "**No scalp setup right now.**\n\n"
             f"M15 momentum: {momentum_str}\n"
-            f"Price vs EMA50: {'Above \u2705' if m15_close > m15_ema50 else 'Below \U0001f4c9'}\n\n"
-            "Wait for momentum to confirm direction.\n"
+            + ("Price vs EMA50: Above ✅\n\n" if m15_close > m15_ema50 else "Price vs EMA50: Below 📉\n\n")
+            + "Wait for momentum to confirm direction.\n"
         )
 
     lines.append(
-        f"─────────────────────────────\n"
-        f"**M15 context:**\n"
-        f"Last 5 candles: {'Rising \U0001f4c8' if momentum_up else 'Falling \U0001f4c9'}\n"
-        f"M15 ATR: ${m15_atr:.2f} (expected move per 15 min)\n"
-        f"*Type 'market read' for full H1 analysis*"
+        "─────────────────────────────\n"
+        "**M15 context:**\n"
+        + ("Last 5 candles: Rising 📈\n" if momentum_up else "Last 5 candles: Falling 📉\n")
+        + f"M15 ATR: ${m15_atr:.2f} (expected move per 15 min)\n"
+        "*Type 'market read' for full H1 analysis*"
     )
 
     return "\n".join(lines)
