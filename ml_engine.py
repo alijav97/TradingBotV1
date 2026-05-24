@@ -9,6 +9,12 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 import numpy as np
 
+try:
+    from data_manager import get_path, save_json, load_json
+    _USE_DM = True
+except Exception:
+    _USE_DM = False
+
 GST             = timezone(timedelta(hours=4))
 PAPER_FILE      = "data/paper_trades.json"
 ML_MODEL_FILE   = "data/ml_model.json"
@@ -18,19 +24,27 @@ ML_INSIGHTS_FILE = "data/ml_insights.json"
 def _get_ml_files(instrument: str = "XAUUSD") -> dict:
     """Return per-instrument file paths for ML model and paper trades."""
     safe = instrument.replace("/", "").upper()
-    if safe == "XAUUSD":
+    if _USE_DM:
         return {
-            "model":   ML_MODEL_FILE,
-            "why":     "ml_why_patterns.json",
-            "paper":   PAPER_FILE,
-            "insights": ML_INSIGHTS_FILE,
+            "model":    get_path(f"ml_model_{safe}.json"),
+            "why":      get_path(f"ml_why_{safe}.json"),
+            "paper":    get_path(f"paper_trades_{safe}.json"),
+            "insights": get_path(f"ml_insights_{safe}.json"),
         }
-    return {
-        "model":   f"data/ml_model_{safe}.json",
-        "why":     f"ml_why_patterns_{safe}.json",
-        "paper":   f"data/paper_trades_{safe}.json",
-        "insights": f"data/ml_insights_{safe}.json",
-    }
+    else:
+        if safe == "XAUUSD":
+            return {
+                "model":    ML_MODEL_FILE,
+                "why":      "ml_why_patterns.json",
+                "paper":    PAPER_FILE,
+                "insights": ML_INSIGHTS_FILE,
+            }
+        return {
+            "model":    f"data/ml_model_{safe}.json",
+            "why":      f"ml_why_patterns_{safe}.json",
+            "paper":    f"data/paper_trades_{safe}.json",
+            "insights": f"data/ml_insights_{safe}.json",
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

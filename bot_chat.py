@@ -6619,5 +6619,19 @@ def main() -> None:
             _add_bot_msg(response)
 
 
+# ── Auto-restart auto trader on cloud boot ─────────────────────────────────
+try:
+    from auto_trader import (
+        start_auto_trader as _boot_start,
+        load_state        as _boot_load_state,
+    )
+    _boot_state = _boot_load_state()
+    if _boot_state.get("enabled", False) and not _boot_state.get("running", False):
+        _boot_start()
+        print("[Bot] Auto trader restarted after redeploy")
+except Exception:
+    pass
+
+
 if __name__ == "__main__":
     main()

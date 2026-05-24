@@ -32,9 +32,20 @@ GST = timezone(timedelta(hours=4))           # UAE / Gulf Standard Time
 # ── Paths ──────────────────────────────────────────────────────────────────────
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR      = os.path.join(BASE_DIR, "data")
-STATE_FILE    = os.path.join(DATA_DIR, "auto_trader_state.json")
 ACTIVITY_FILE = os.path.join(DATA_DIR, "auto_trader_activity.json")
 os.makedirs(DATA_DIR, exist_ok=True)
+
+try:
+    from data_manager import get_path, save_json, load_json
+    _USE_DM = True
+except Exception:
+    _USE_DM = False
+
+STATE_FILE = (
+    get_path("auto_trader_state.json")
+    if _USE_DM
+    else os.path.join(DATA_DIR, "auto_trader_state.json")
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CHANGE 1 — Final INSTRUMENTS config
@@ -181,30 +192,38 @@ _YF_MAP: dict[str, str] = {
 
 def load_state() -> dict:
     """Load auto-trader runtime state from disk."""
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
+    try:
+        if _USE_DM:
+            data = load_json("auto_trader_state.json", default={})
+            if data:
+                return data
+        else:
+            if os.path.exists(STATE_FILE):
+                with open(STATE_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+    except Exception:
+        pass
     return {
-        "enabled":          False,
-        "running":          False,
-        "trades_today":     {},    # {instr: count}
-        "last_tick":        None,
-        "open_trades":      [],
-        "activity_log":     [],
-        "started_at":       None,
+        "enabled":      False,
+        "running":      False,
+        "trades_today": {},
+        "last_tick":    None,
+        "open_trades":  [],
+        "activity_log": [],
+        "started_at":   None,
     }
 
 
 def save_state(state: dict) -> None:
     """Persist state to disk."""
     try:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, default=str)
+        if _USE_DM:
+            save_json("auto_trader_state.json", state)
+        else:
+            with open(STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2, default=str)
     except Exception as e:
-        print(f"[auto_trader] save_state error: {e}")
+        print(f"[AutoTrader] State save error: {e}")
 
 
 def _trades_path(instr: str) -> str:
@@ -218,20 +237,33 @@ def _trades_path(instr: str) -> str:
 
 def load_trades(instr: str) -> list:
     """Load paper trades for an instrument."""
-    path = _trades_path(instr)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
+    try:
+        filename = os.path.basename(
+            INSTRUMENTS[instr]["trades_file"])
+        if _USE_DM:
+            return load_json(filename, default=[]) or []
+        else:
+            path = _trades_path(instr)
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+    except Exception:
+        pass
     return []
 
 
 def save_trades(instr: str, trades: list) -> None:
-    path = _trades_path(instr)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(trades, f, indent=2, default=str)
+    try:
+        filename = os.path.basename(
+            INSTRUMENTS[instr]["trades_file"])
+        if _USE_DM:
+            save_json(filename, trades)
+        else:
+            path = _trades_path(instr)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(trades, f, indent=2, default=str)
+    except Exception as e:
+        print(f"[Trades] Save error: {e}")
 
 
 def log_activity(state: dict, message: str, category: str = "INFO") -> None:
