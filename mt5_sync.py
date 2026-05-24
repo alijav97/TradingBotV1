@@ -29,10 +29,13 @@ except ImportError:
 # ── Optional MT5 import ───────────────────────────────────────────────────────
 try:
     import MetaTrader5 as mt5
-    _MT5_LIB = True
+    _MT5_AVAILABLE = True
+    _MT5_LIB = True   # alias kept for internal compatibility
 except ImportError:
     mt5 = None           # type: ignore[assignment]
+    _MT5_AVAILABLE = False
     _MT5_LIB = False
+    print("[MT5] MetaTrader5 not available — using yfinance fallback")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
