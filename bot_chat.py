@@ -797,9 +797,9 @@ def _sl_filter(sig: dict, df, settings: dict) -> tuple:
         atr = 5.0
     min_sl_dist = atr * 0.5
     sl_dist     = abs(entry - sl)
-    balance     = settings.get("balance",  300)
-    leverage    = settings.get("leverage",  20)
-    risk_pct    = settings.get("risk_pct",  10)
+    balance     = settings.get("balance",  1000)
+    leverage    = settings.get("leverage",  10)
+    risk_pct    = settings.get("risk_pct",  2.0)
 
     if sl_dist < min_sl_dist:
         return "reject", {"reason": f"SL too tight (${sl_dist:.2f} < min ${min_sl_dist:.2f})"}
@@ -828,11 +828,11 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
     # ── Load settings ────────────────────────────────────────────────────────
     settings   = _load_settings()
     if account <= 0:
-        account = float(settings.get("balance", 300))
+        account = float(settings.get("balance", 1000))
     # Always enforce settings values — ignore passed account if settings loaded OK
     account    = float(settings.get("balance", account))
-    risk_pct   = float(settings.get("risk_pct",  10))
-    leverage   = float(settings.get("leverage",  20))
+    risk_pct   = float(settings.get("risk_pct",  2.0))
+    leverage   = float(settings.get("leverage",  10))
     partial_tp = bool(settings.get("partial_tp", True))
     min_rr     = float(settings.get("min_rr",    3.0))
 
@@ -5325,7 +5325,6 @@ def _handle_reversals(_msg: str) -> str:
 
 def _render_home() -> None:
     """Render the home screen with quick-action buttons and glossary."""
-    st.markdown("# 🤖 TradingBotV1")
     _active_instr = st.session_state.get("instrument", "XAUUSD")
     st.markdown(
         f"**Trading {_active_instr}** — signals, strategies, risk"
@@ -5333,14 +5332,29 @@ def _render_home() -> None:
 
     # Live price card
     try:
-        from mt5_sync import get_price_for_instrument as _gpfi_home
-        _home_price = _gpfi_home(_active_instr)
-        if _home_price and _home_price > 0:
-            st.success(f"💰 Live Price: **${_home_price:,.4f}**")
+        import yfinance as yf
+        _YF_HOME = {
+            "XAUUSD": "GC=F", "NAS100": "NQ=F", "US30": "YM=F",
+            "GBPUSD": "GBPUSD=X", "EURUSD": "EURUSD=X", "WTI": "CL=F",
+        }
+        _instr  = st.session_state.get("instrument", "XAUUSD")
+        _tk     = yf.Ticker(_YF_HOME.get(_instr, "GC=F"))
+        _hist   = _tk.history(period="1d", interval="5m")
+        if not _hist.empty:
+            _hprice  = float(_hist["Close"].iloc[-1])
+            _hchange = float(_hist["Close"].iloc[-1] - _hist["Close"].iloc[0])
+            _hpct    = _hchange / _hist["Close"].iloc[0] * 100
+            _hcolor  = "🟢" if _hchange >= 0 else "🔴"
+            st.success(
+                f"💰 **{_instr}**: "
+                f"${_hprice:,.4f} "
+                f"{_hcolor} {_hchange:+.2f} "
+                f"({_hpct:+.2f}%)"
+            )
         else:
-            st.warning("Price loading…")
-    except Exception:
-        pass
+            st.warning(f"⏳ {_instr} price updating... (market may be closed)")
+    except Exception as _he:
+        st.warning(f"⏳ Price loading — market may be closed ({str(_he)[:50]})")
 
     st.markdown("---")
 
@@ -5598,25 +5612,26 @@ def _render_sidebar(account: float) -> None:
         _sidebar_time = datetime.now(_gst_sb).strftime("%I:%M %p")
         _sidebar_date = datetime.now(_gst_sb).strftime("%a %d %b %Y")
         _sb_instr = st.session_state.get("instrument", "XAUUSD")
-        if _sb_instr == "XAUUSD":
-            _sidebar_price  = st.session_state.get("live_price") or 0
-            _sidebar_source = st.session_state.get("live_source", "—")
-        else:
-            try:
-                from mt5_sync import get_price_for_instrument as _gpfi_sb
-                _gpfi_result    = _gpfi_sb(_sb_instr)
-                _sidebar_price  = _gpfi_result.get("price", 0) if isinstance(_gpfi_result, dict) else (float(_gpfi_result) if _gpfi_result else 0)
-                _sidebar_source = _gpfi_result.get("source", "live") if isinstance(_gpfi_result, dict) else "live"
-            except Exception:
-                _sidebar_price  = st.session_state.get("live_price") or 0
-                _sidebar_source = "—"
         st.markdown(f"**🕐 {_sidebar_time} UAE** | {_sidebar_date}")
-        if _sidebar_price > 0:
-            st.markdown(
-                f"**💰 {_sb_instr}: ${_sidebar_price:,.2f}** "
-                f"<small>[{_sidebar_source}]</small>",
-                unsafe_allow_html=True,
-            )
+        try:
+            import yfinance as yf
+            _YF_SB = {
+                "XAUUSD": "GC=F", "NAS100": "NQ=F", "US30": "YM=F",
+                "GBPUSD": "GBPUSD=X", "EURUSD": "EURUSD=X", "WTI": "CL=F",
+            }
+            _tk_sb = yf.Ticker(_YF_SB.get(_sb_instr, "GC=F"))
+            _h_sb  = _tk_sb.history(period="1d", interval="5m")
+            if not _h_sb.empty:
+                _p_sb = float(_h_sb["Close"].iloc[-1])
+                st.markdown(
+                    f"**💰 {_sb_instr}: ${_p_sb:,.2f}** "
+                    "<small>[yfinance]</small>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info(f"{_sb_instr}: market closed")
+        except Exception:
+            st.info("Price loading...")
         st.caption(f"🌍 {get_session_summary_line() if _WS_OK else _current_session()}")
         st.caption("Price and time refresh every 60 seconds")
 
@@ -6187,11 +6202,11 @@ def _render_sidebar(account: float) -> None:
 
         # Account settings display (loaded from data/user_settings.json)
         _s = _load_settings()
-        _bal  = float(_s.get("balance",   300))
-        _rpct = float(_s.get("risk_pct",  10))
+        _bal  = float(_s.get("balance",   1000))
+        _rpct = float(_s.get("risk_pct",  2.0))
         _rusd = float(_s.get("risk_usd",  _bal * _rpct / 100))
         _rr   = float(_s.get("min_rr",    3.0))
-        _lev  = float(_s.get("leverage",  20))
+        _lev  = float(_s.get("leverage",  10))
         _rewp = float(_s.get("reward_pct", _rpct * _rr))
         st.markdown("**⚙️ Risk Settings** *(from user_settings.json)*")
         col_a, col_b = st.columns(2)
