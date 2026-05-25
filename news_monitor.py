@@ -60,7 +60,16 @@ RISK_KEYWORDS = [
     "war", "conflict", "crisis", "sanctions",
     "geopolitical", "China", "Russia",
     "Middle East", "Ukraine", "Taiwan",
-    "earthquake", "pandemic", "terror"
+    "earthquake", "pandemic", "terror",
+    # Extended geopolitical / macro event triggers
+    "ceasefire", "peace deal", "OPEC", "Fed",
+    "rate decision", "CPI", "NFP",
+    "Iran", "Israel", "Gaza",
+    "China tariffs", "oil embargo",
+    "gulf", "UAE", "Saudi", "Middle East tension",
+    "nuclear", "airstrike", "missile",
+    "coup", "regime change", "election outcome",
+    "debt ceiling", "default", "credit downgrade",
 ]
 
 CRYPTO_KEYWORDS = [
@@ -86,10 +95,23 @@ CATEGORY_MAP: list[tuple[str, list[str]]] = [
 
 GENERAL_FINANCIAL_FEEDS = [
     "https://feeds.reuters.com/reuters/businessNews",
+    "https://feeds.reuters.com/reuters/worldNews",
     "https://www.cnbc.com/id/20910258/device/rss/rss.html",
     "http://feeds.bbci.co.uk/news/business/rss.xml",
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
     "https://feeds.content.dowjones.io/public/rss/mw_marketpulse",
+    "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines",
     "https://www.investing.com/rss/news.rss",
+    "https://apnews.com/rss",
+    "https://www.ft.com/?format=rss",
+]
+
+GEOPOLITICAL_FEEDS = [
+    "https://rss.app/feeds/Al-Jazeera-English.xml",
+    "https://www.arabnews.com/rss.xml",
+    "https://feeds.reuters.com/reuters/worldNews",
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "https://apnews.com/rss",
 ]
 
 GOLD_AND_COMMODITIES_FEEDS = [
@@ -127,13 +149,14 @@ X_TWITTER_FEEDS = [
 ]
 
 # All feeds combined — used as the default source list
-ALL_FEEDS: list[str] = (
+ALL_FEEDS: list[str] = list(dict.fromkeys(
     GENERAL_FINANCIAL_FEEDS
+    + GEOPOLITICAL_FEEDS
     + GOLD_AND_COMMODITIES_FEEDS
     + FOREX_AND_MACRO_FEEDS
     + INDICES_AND_STOCKS_FEEDS
     + X_TWITTER_FEEDS
-)
+))
 
 
 # ── Helper: categorise a single news item ────────────────────────────────────

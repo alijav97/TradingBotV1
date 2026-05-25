@@ -5329,33 +5329,57 @@ def _render_home() -> None:
         f"**Trading {_active_instr}** — signals, strategies, risk"
     )
 
-    # Live price card
+    # Live price card — same source priority as sidebar (MT5 → yfinance)
     try:
-        import yfinance as yf
-        _YF_HOME = {
-            "XAUUSD": "GC=F", "NAS100": "NQ=F", "US30": "YM=F",
-            "GBPUSD": "GBPUSD=X", "EURUSD": "EURUSD=X", "WTI": "CL=F",
-        }
-        _instr  = st.session_state.get("instrument", "XAUUSD")
-        _tk     = yf.Ticker(_YF_HOME.get(_instr, "GC=F"))
-        _hist   = _tk.history(period="5d", interval="5m")
-        if _hist.empty:
-            _hist = _tk.history(period="1mo", interval="1d")
-        if not _hist.empty:
-            _hprice  = float(_hist["Close"].iloc[-1])
-            _hchange = float(_hist["Close"].iloc[-1] - _hist["Close"].iloc[0])
-            _hpct    = _hchange / _hist["Close"].iloc[0] * 100
-            _hcolor  = "🟢" if _hchange >= 0 else "🔴"
+        _instr    = st.session_state.get("instrument", "XAUUSD")
+        _hprice   = 0.0
+        _hsrc     = ""
+        # Priority 1: MT5 / get_price_for_instrument
+        try:
+            from mt5_sync import get_price_for_instrument as _gpfi_home
+            _hprice = float(_gpfi_home(_instr) or 0)
+            _hsrc   = "MT5" if _hprice > 0 else ""
+        except Exception:
+            pass
+        # Priority 2: yfinance (5d window so weekends always have data)
+        if _hprice <= 0:
+            import yfinance as yf
+            _YF_HOME = {
+                "XAUUSD": "GC=F", "NAS100": "NQ=F", "US30": "YM=F",
+                "GBPUSD": "GBPUSD=X", "EURUSD": "EURUSD=X", "WTI": "CL=F",
+            }
+            _tk   = yf.Ticker(_YF_HOME.get(_instr, "GC=F"))
+            _hist = _tk.history(period="5d", interval="5m")
+            if _hist.empty:
+                _hist = _tk.history(period="1mo", interval="1d")
+            if not _hist.empty:
+                _hprice = float(_hist["Close"].iloc[-1])
+                _hsrc   = "yfinance"
+        # Also sync session state so header and sidebar show identical price
+        if _hprice > 0:
+            st.session_state["live_price"]  = _hprice
+            st.session_state["live_source"] = _hsrc
+        # Compute day change from session state history if available
+        _prev = st.session_state.get("_home_open_price", _hprice)
+        if "_home_open_price" not in st.session_state:
+            st.session_state["_home_open_price"] = _hprice
+        _hchange = _hprice - _prev
+        _hpct    = (_hchange / _prev * 100) if _prev else 0.0
+        _hcolor  = "🟢" if _hchange >= 0 else "🔴"
+        if _hprice > 0:
             st.success(
                 f"💰 **{_instr}**: "
                 f"${_hprice:,.4f} "
                 f"{_hcolor} {_hchange:+.2f} "
-                f"({_hpct:+.2f}%)"
+                f"({_hpct:+.2f}%) "
+                f"<small>[{_hsrc}]</small>",
+                # unsafe_allow_html only available in st.markdown — use caption for source
             )
+            st.caption(f"Source: {_hsrc} | Updates every 60s")
         else:
-            st.warning(f"⏳ {_instr} price updating... (market may be closed)")
+            st.warning(f"⏳ {_instr} price updating...")
     except Exception as _he:
-        st.warning(f"⏳ Price loading — market may be closed ({str(_he)[:50]})")
+        st.warning(f"⏳ Price loading ({str(_he)[:60]})") 
 
     st.markdown("---")
 
