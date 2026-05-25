@@ -1816,49 +1816,50 @@ def _handle_gold(_msg: str, account: float = 300.0) -> str:
     lines = ["### 📊 XAUUSD Analysis\n"]
 
     # ── Session gate — block low-quality signal generation off-hours ─────────
-    try:
-        from world_sessions import get_active_sessions
-        _active_sess = get_active_sessions()
-        _is_tradeable = any(
-            s["is_active"] for s in _active_sess
-            if "off" not in s.get("name", "").lower()
-            and "asian" not in s.get("name", "").lower()
-        )
-        from datetime import timezone, timedelta
-        _GST = timezone(timedelta(hours=4))
-        _uae_hr = datetime.now(_GST).hour
-        _hour_ok = (12 <= _uae_hr < 21) or (17 <= _uae_hr <= 23) or (_uae_hr < 1)
-        _session_ok = _is_tradeable or _hour_ok
-    except Exception:
-        from datetime import timezone, timedelta
-        _GST = timezone(timedelta(hours=4))
-        _uae_hr = datetime.now(_GST).hour
-        _session_ok = (12 <= _uae_hr < 21) or (17 <= _uae_hr <= 23) or (_uae_hr < 1)
+    # ── Session quality flag (no hard block except Fri 9 PM+ / weekend) ─────
+    from datetime import timezone, timedelta
+    _GST = timezone(timedelta(hours=4))
+    _now_gst   = datetime.now(_GST)
+    _uae_hr    = _now_gst.hour
+    _uae_dow   = _now_gst.weekday()  # 0=Mon … 6=Sun
+    _hard_block = (
+        (_uae_dow == 4 and _uae_hr >= 21) or  # Friday after 9 PM UAE
+        _uae_dow == 5 or                        # Saturday
+        _uae_dow == 6                           # Sunday
+    )
     _force = any(k in _msg.lower() for k in
                  ["force", "show anyway", "override", "ignore session", "any signals"])
-    if not _session_ok and not _force:
-        from datetime import timezone, timedelta
-        _GST = timezone(timedelta(hours=4))
-        _uae_hr = datetime.now(_GST).hour
-        _next_w = "12:00 PM UAE today" if _uae_hr < 12 else "12:00 PM UAE tomorrow"
+    if _hard_block and not _force:
         _price_g = st.session_state.get("live_price", 0)
         return (
-            f"⏸ **Off-Hours — Signal generation paused**\n\n"
-            f"No major session active right now.\n\n"
-            f"**Next window:** {_next_w}\n"
-            f"**Best window:** 4:00 PM – 7:00 PM UAE\n\n"
-            f"Current XAUUSD: **${_price_g:,.2f}** [MT5]\n\n"
+            f"⏸ **Market Closed — Weekend / Friday close**\n\n"
+            f"Forex/Gold markets are closed.\n\n"
+            f"**Reopens:** Sunday 10:00 PM UAE\n"
+            f"**Best window:** Monday–Friday 4:00 PM – 7:00 PM UAE\n\n"
+            f"Current price: **${_price_g:,.2f}**\n\n"
             f"*Type 'show anyway' to force scan.*"
         )
+    _optimal_window = (16 <= _uae_hr < 19)  # 4–7 PM UAE preferred
+    _off_optimal    = not _optimal_window
 
     df = _load_df()
     if df is None:
         return "❌ Cannot load price data. Run `setup` first or check `data/historical_xauusd.csv`."
 
+    _window_note = ""
+    if _off_optimal:
+        _window_note = (
+            f"\n> ⚠️ **Outside optimal window** (4–7 PM UAE) — "
+            f"signals are valid but confidence may be lower. "
+            f"Best entries occur during London/NY overlap.\n"
+        )
+
     price = st.session_state["live_price"]
     rsi   = st.session_state["live_rsi"]
     trend = st.session_state["live_trend"]
     atr   = st.session_state["live_atr"]
+    if _window_note:
+        lines.append(_window_note)
     lines.append(
         f"**Price:** ${price:,}  |  **RSI:** {rsi}  |  "
         f"**Trend:** {trend}  |  **ATR:** ${atr}"
@@ -2497,45 +2498,43 @@ def _handle_signals(_msg: str, account: float = 300.0) -> str:
     _sig_instr = st.session_state.get("instrument", "XAUUSD")
     lines = [f"### 📡 Signal Scan — {_sig_instr}\n"]
 
-    # ── Session gate — block low-quality signal generation off-hours ─────────
-    try:
-        from world_sessions import get_active_sessions
-        _active_sess2 = get_active_sessions()
-        _is_tradeable2 = any(
-            s["is_active"] for s in _active_sess2
-            if "off" not in s.get("name", "").lower()
-            and "asian" not in s.get("name", "").lower()
-        )
-        from datetime import timezone, timedelta
-        _GST2 = timezone(timedelta(hours=4))
-        _uae_hr2 = datetime.now(_GST2).hour
-        _hour_ok2 = (12 <= _uae_hr2 < 21) or (17 <= _uae_hr2 <= 23) or (_uae_hr2 < 1)
-        _session_ok2 = _is_tradeable2 or _hour_ok2
-    except Exception:
-        from datetime import timezone, timedelta
-        _GST2 = timezone(timedelta(hours=4))
-        _uae_hr2 = datetime.now(_GST2).hour
-        _session_ok2 = (12 <= _uae_hr2 < 21) or (17 <= _uae_hr2 <= 23) or (_uae_hr2 < 1)
+    # ── Session quality flag (no hard block except Fri 9 PM+ / weekend) ─────
+    from datetime import timezone, timedelta
+    _GST2      = timezone(timedelta(hours=4))
+    _now_gst2  = datetime.now(_GST2)
+    _uae_hr2   = _now_gst2.hour
+    _uae_dow2  = _now_gst2.weekday()  # 0=Mon … 6=Sun
+    _hard_block2 = (
+        (_uae_dow2 == 4 and _uae_hr2 >= 21) or  # Friday after 9 PM UAE
+        _uae_dow2 == 5 or                          # Saturday
+        _uae_dow2 == 6                             # Sunday
+    )
     _force2 = any(k in _msg.lower() for k in
                   ["force", "show anyway", "override", "ignore session", "any signals"])
-    if not _session_ok2 and not _force2:
-        from datetime import timezone, timedelta
-        _GST2 = timezone(timedelta(hours=4))
-        _uae_hr2 = datetime.now(_GST2).hour
-        _next_w2 = "12:00 PM UAE today" if _uae_hr2 < 12 else "12:00 PM UAE tomorrow"
+    if _hard_block2 and not _force2:
         _price_s = st.session_state.get("live_price", 0)
         return (
-            f"⏸ **Off-Hours — Signal generation paused**\n\n"
-            f"No major session active right now.\n\n"
-            f"**Next window:** {_next_w2}\n"
-            f"**Best window:** 4:00 PM – 7:00 PM UAE\n\n"
-            f"Current {_sig_instr}: **${_price_s:,.2f}** [MT5]\n\n"
+            f"⏸ **Market Closed — Weekend / Friday close**\n\n"
+            f"Forex/Gold markets are closed.\n\n"
+            f"**Reopens:** Sunday 10:00 PM UAE\n"
+            f"**Best window:** Monday–Friday 4:00 PM – 7:00 PM UAE\n\n"
+            f"Current {_sig_instr}: **${_price_s:,.2f}**\n\n"
             f"*Type 'show anyway' to force scan.*"
         )
+    _optimal_window2 = (16 <= _uae_hr2 < 19)
+    _off_optimal2    = not _optimal_window2
 
     df = _load_df()
     if df is None:
         return "❌ Cannot load price data. Run `setup` first."
+
+    _window_note2 = ""
+    if _off_optimal2:
+        _window_note2 = (
+            f"\n> ⚠️ **Outside optimal window** (4–7 PM UAE) — "
+            f"signals are valid but confidence may be lower. "
+            f"Best entries occur during London/NY overlap.\n"
+        )
 
     sentiment = st.session_state.get("sentiment", {})
     pb_mod = MODS.get("playbooks")
@@ -2761,12 +2760,15 @@ def _handle_signals(_msg: str, account: float = 300.0) -> str:
 
     if not passed:
         lines.append("⚠️ No signals passed checklist 4/5+ right now.\n")
+        if _window_note2:
+            lines.append(_window_note2)
         lines.append("Possible reasons:")
-        lines.append("- Weekend / Asian session (low-probability windows blocked)")
         lines.append("- Confluence below threshold (< 3 factors aligned)")
         lines.append("- R:R below 2.0 minimum\n")
         lines.append("Try `gold` to see best available setups without gate filter.")
     else:
+        if _window_note2:
+            lines.append(_window_note2)
         lines.append(f"**{len(passed)} signal(s) passed — sorted by confidence:**\n")
         for i, sig in enumerate(passed[:5], 1):
             lines.append(_render_trade_card(sig, i, account))
@@ -5613,22 +5615,37 @@ def _render_sidebar(account: float) -> None:
         _sb_instr = st.session_state.get("instrument", "XAUUSD")
         st.markdown(f"**🕐 {_sidebar_time} UAE** | {_sidebar_date}")
         try:
-            import yfinance as yf
-            _YF_SB = {
-                "XAUUSD": "GC=F", "NAS100": "NQ=F", "US30": "YM=F",
-                "GBPUSD": "GBPUSD=X", "EURUSD": "EURUSD=X", "WTI": "CL=F",
-            }
-            _tk_sb = yf.Ticker(_YF_SB.get(_sb_instr, "GC=F"))
-            _h_sb  = _tk_sb.history(period="1d", interval="5m")
-            if not _h_sb.empty:
-                _p_sb = float(_h_sb["Close"].iloc[-1])
+            # Priority 1: MT5 live tick — if it returns a price, market is OPEN
+            _sb_price = 0.0
+            _sb_src   = ""
+            try:
+                from mt5_sync import get_price_for_instrument as _gpfi_sb
+                _sb_price = float(_gpfi_sb(_sb_instr) or 0)
+                _sb_src   = "MT5" if _sb_price > 0 else ""
+            except Exception:
+                pass
+            # Priority 2: yfinance (5-day window so weekends always show last price)
+            if _sb_price <= 0:
+                import yfinance as yf
+                _YF_SB = {
+                    "XAUUSD": "GC=F", "NAS100": "NQ=F", "US30": "YM=F",
+                    "GBPUSD": "GBPUSD=X", "EURUSD": "EURUSD=X", "WTI": "CL=F",
+                }
+                _tk_sb = yf.Ticker(_YF_SB.get(_sb_instr, "GC=F"))
+                _h_sb  = _tk_sb.history(period="5d", interval="5m")
+                if _h_sb.empty:
+                    _h_sb = _tk_sb.history(period="1mo", interval="1d")
+                if not _h_sb.empty:
+                    _sb_price = float(_h_sb["Close"].iloc[-1])
+                    _sb_src   = "yfinance"
+            if _sb_price > 0:
                 st.markdown(
-                    f"**💰 {_sb_instr}: ${_p_sb:,.2f}** "
-                    "<small>[yfinance]</small>",
+                    f"**💰 {_sb_instr}: ${_sb_price:,.2f}** "
+                    f"<small>[{_sb_src}]</small>",
                     unsafe_allow_html=True,
                 )
             else:
-                st.info(f"{_sb_instr}: market closed")
+                st.info(f"{_sb_instr}: price unavailable")
         except Exception:
             st.info("Price loading...")
         st.caption(f"🌍 {get_session_summary_line() if _WS_OK else _current_session()}")
