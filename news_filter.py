@@ -21,6 +21,9 @@ GST = timezone(timedelta(hours=4))
 # Forex Factory calendar RSS (returns today's events)
 FF_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
 
+# Rate-limit cooldown: skip FF calendar for 60 min after a 429 response
+_FF_RATE_LIMITED_UNTIL: float = 0.0  # Unix timestamp
+
 # Impact levels to include (filter out low-impact noise)
 HIGH_IMPACT_LEVELS = {"High", "Medium"}
 
@@ -42,6 +45,15 @@ def fetch_ff_calendar() -> list[dict]:
             title, country, date, time_utc, time_gst,
             impact, forecast, previous
     """
+    global _FF_RATE_LIMITED_UNTIL
+    import time as _time
+
+    # Respect rate-limit cooldown (60 minutes)
+    if _time.time() < _FF_RATE_LIMITED_UNTIL:
+        _remaining = int((_FF_RATE_LIMITED_UNTIL - _time.time()) / 60)
+        print(f"  [SKIP] Forex Factory rate limited — skipping ({_remaining}m remaining)")
+        return []
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -54,6 +66,10 @@ def fetch_ff_calendar() -> list[dict]:
 
     try:
         response = requests.get(FF_CALENDAR_URL, headers=headers, timeout=15)
+        if response.status_code == 429:
+            _FF_RATE_LIMITED_UNTIL = _time.time() + 3600  # 60-minute cooldown
+            print("  [WARN] Forex Factory rate limited (429) — skipping for 60 minutes")
+            return []
         response.raise_for_status()
         root = ET.fromstring(response.content)
 
@@ -102,7 +118,11 @@ def fetch_ff_calendar() -> list[dict]:
             })
 
     except requests.RequestException as exc:
-        print(f"  [ERROR] Could not fetch Forex Factory calendar: {exc}")
+        if hasattr(exc, "response") and exc.response is not None and exc.response.status_code == 429:
+            _FF_RATE_LIMITED_UNTIL = _time.time() + 3600
+            print("  [WARN] Forex Factory rate limited (429) — skipping for 60 minutes")
+        else:
+            print(f"  [ERROR] Could not fetch Forex Factory calendar: {exc}")
     except ET.ParseError as exc:
         print(f"  [ERROR] Could not parse calendar XML: {exc}")
 

@@ -664,7 +664,22 @@ def _load_df():
     try:
         import pandas as pd
         import numpy as np
-        df = pd.read_csv(HIST_CSV, index_col=0)
+        # Pick the CSV that matches the currently selected instrument
+        _HIST_CSV_MAP: dict[str, str] = {
+            "XAUUSD":    os.path.join(BASE_DIR, "data", "historical_xauusd.csv"),
+            "NAS100":    os.path.join(BASE_DIR, "data", "historical_nas100.csv"),
+            "US30":      os.path.join(BASE_DIR, "data", "historical_us30.csv"),
+            "GBPUSD":    os.path.join(BASE_DIR, "data", "historical_gbpusd.csv"),
+            "EURUSD":    os.path.join(BASE_DIR, "data", "historical_eurusd.csv"),
+            "WTI":       os.path.join(BASE_DIR, "data", "historical_wti.csv"),
+            "SpotCrude": os.path.join(BASE_DIR, "data", "historical_wti.csv"),
+        }
+        _cur_instr = st.session_state.get("instrument", "XAUUSD")
+        _csv_path  = _HIST_CSV_MAP.get(_cur_instr, HIST_CSV)
+        # Fall back to XAUUSD CSV if the instrument-specific file doesn't exist yet
+        if not os.path.exists(_csv_path):
+            _csv_path = HIST_CSV
+        df = pd.read_csv(_csv_path, index_col=0)
         df.columns = [c.lower() for c in df.columns]
         if "open" not in df.columns:
             df["open"] = df["close"].shift(1).fillna(df["close"])
@@ -1906,6 +1921,12 @@ def _handle_analyze_instrument(instr: str, msg: str, account: float = 300.0) -> 
     # For all other instruments: fetch live price then run signals handler
     # which already reads st.session_state["instrument"]
     _lp = _get_live_price(instr)
+    if isinstance(_lp, dict):
+        _lp = _lp.get("price") or _lp.get("bid") or next(iter(_lp.values()), 0)
+    try:
+        _lp = float(_lp) if _lp else 0
+    except Exception:
+        _lp = 0
     if _lp and _lp > 0:
         st.session_state["live_price"] = _lp
 
