@@ -1470,6 +1470,36 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
         except Exception:
             pass
 
+    # ── Build per-gate checklist debug lines ────────────────────────────────
+    _gate_names = {
+        1: "Trend Align", 2: "Confluence", 3: "Risk/Reward",
+        4: "News Safety", 5: "Session",
+    }
+    _ck_detail_lines = ""
+    _ck_results_dict = sl_q.get("check_results", {})
+    if _ck_results_dict:
+        _gate_parts = []
+        for _gi in range(1, 6):
+            _gr = _ck_results_dict.get(_gi, {})
+            _gicon = "✓" if _gr.get("passed") else "✗"
+            _gname = _gate_names.get(_gi, f"Check {_gi}")
+            _gate_parts.append(f"{_gicon}{_gname}")
+        _ck_detail_lines = "  GATES:     " + "  ".join(_gate_parts) + "\n"
+        # Add first failure reason if any gate failed
+        for _gi in range(1, 6):
+            _gr = _ck_results_dict.get(_gi, {})
+            if not _gr.get("passed"):
+                _fail_detail = _gr.get("detail", "").split("\n")[0]
+                _ck_detail_lines += f"  ✗ Gate {_gi}: {_fail_detail}\n"
+                break
+    _risk_note_line = ""
+    if sl_q.get("risk_note"):
+        _risk_note_line = f"  ⚠ Risk: {sl_q['risk_note']}\n"
+    _grade_line = (
+        f"  Grade: {_instr_grade} ({int(_grade_mult*100)}% size) "
+        f"| {asset} instrument tier\n"
+    )
+
     wide_sl_block = ""
     if not_tradeable:
         _needed = pos.get("account_needed", 0)
@@ -1608,6 +1638,8 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
         f"{sl_check_lines}"
         f"  {DASH}\n"
         f"  {ck_line}\n"
+        f"{_ck_detail_lines}"
+        f"{_risk_note_line}"
         f"\n"
         f"  CONFLUENCE:\n"
         f"{conf_block}\n"
@@ -1628,6 +1660,7 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
         f"  {DASH}\n"
         f"  YOUR POSITION ({risk_pct:.0f}% risk · {leverage:.0f}x leverage)\n"
         f"  {DASH}\n"
+        f"{_grade_line}"
         + wide_sl_block
         + (
             f"  Session:     [{_sess_name}] Grade [{_sess_grade}]"

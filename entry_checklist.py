@@ -491,19 +491,24 @@ class EntryChecklist:
                 "passed":     True,
                 "check_name": "Session Quality ✓ (Breakout Exception)",
                 "detail":     (
-                    f"Asian session — normally FAIL\n"
+                    f"Asian session — normally low quality\n"
                     f"    Exception: breakout strategy active ✓"
                 ),
                 "session":    session,
                 "confidence_adj": 0,
             }
         else:
+            # Low-quality session (Asian / Off-Hours) — PASS with advisory note
+            # Hard fail is reserved for weekend only (handled above)
             return {
-                "passed":     False,
-                "check_name": "Session Quality FAILED",
-                "detail":     f"{session} — low-probability session for trading",
+                "passed":     True,
+                "check_name": f"Session Quality ✓ ({session} — low quality)",
+                "detail":     (
+                    f"{session} — lower-probability session\n"
+                    f"    ⚠ Outside optimal window (London/NY) — reduce size or wait"
+                ),
                 "session":    session,
-                "confidence_adj": 0,
+                "confidence_adj": -0.5,  # slight confidence penalty for off-peak
             }
 
 
@@ -694,30 +699,29 @@ def validate_entry(
 
     df = _enrich(df)
 
-    # ── CHECK 0 — Risk feasibility (hard-fail before all other checks) ──────
-    _entry_p = float(_sig(signal, "entry",     0) or 0)
-    _sl_p    = float(_sig(signal, "stop_loss", 0) or 0)
+    # ── CHECK 0 — Risk feasibility (advisory only — never hard-blocks checklist) ───
+    _entry_p    = float(_sig(signal, "entry",     0) or 0)
+    _sl_p       = float(_sig(signal, "stop_loss", 0) or 0)
+    _risk_note  = ""
+    _risk_ok    = True
     if _entry_p and _sl_p:
         try:
             from settings import load_settings as _lset, calculate_position as _cpos
             _pos = _cpos(_entry_p, _sl_p, _lset())
             if not _pos.get("tradeable", True):
-                _reason = _pos.get("reason", "Setup not tradeable with current risk settings")
-                return {
-                    "passed":           False,
-                    "checks_passed":    0,
-                    "check_results":    {0: {"passed": False, "check_name": "Risk Feasibility",
-                                            "reason": _reason, "hard_fail": True}},
-                    "rejection_reason": _reason,
-                    "final_confidence": float(_sig(signal, "confidence_score", 5.0) or 5.0),
-                    "hard_fail":        True,
-                }
+                _risk_note = _pos.get("reason", "Setup may not be tradeable with current balance")
+                _risk_ok   = False   # recorded in results but does NOT short-circuit the gates
         except Exception:
             pass
-    # ── END CHECK 0 ──────────────────────────────────────────────────────────
+    # ── END CHECK 0 ─────────────────────────────────────────────────────────────
 
     checker  = EntryChecklist()
-    base_conf= float(_sig(signal, "confidence_score", 5.0) or 5.0)
+    # Read confidence — signals use 'confidence', checklist historically expected 'confidence_score'
+    base_conf = float(
+        _sig(signal, "confidence_score", None)
+        or _sig(signal, "confidence", None)
+        or 5.0
+    )
     conf_adj = 0.0
 
     r1 = checker.check_trend_alignment(signal, df)
@@ -773,6 +777,8 @@ def validate_entry(
         "rejection_reason": rejection_reason,
         "final_confidence": final_confidence,
         "confidence_adj":   conf_adj,
+        "risk_note":        _risk_note,   # advisory only — why sizing may differ
+        "risk_feasible":    _risk_ok,
     }
 
 
