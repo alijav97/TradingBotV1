@@ -906,6 +906,7 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
     entry     = float(sig.get("entry",       0) or 0)
     sl        = float(sig.get("stop_loss",   0) or 0)
     tp        = float(sig.get("take_profit", 0) or 0)
+    print(f"[TradeCard] SETUP {idx} | asset={asset} | pattern={pattern} | conf={conf} | entry={entry} | sl={sl} | tp={tp} | source={source}")
 
     # ── Grade multiplier from INSTRUMENT_RISK_CONFIG ─────────────────────────
     _instr_cfg   = INSTRUMENT_RISK_CONFIG.get(asset, INSTRUMENT_RISK_CONFIG.get("XAUUSD", {}))
@@ -2073,12 +2074,15 @@ def _handle_gold(_msg: str, account: float = 300.0) -> str:
                     _conf_result = _sc(df, hit["direction"], symbol="XAUUSD")
                     sig["detail_lines"] = _conf_result.get("detail_lines", [])
                     sig["confluence_result"] = _conf_result
+                    sig["confluence_score"]  = _conf_result.get("confluence_score", 0)
                     # Use confluence confidence if better than playbook score
                     _ce_conf = _conf_result.get("confidence", 0)
                     if _ce_conf > 0:
                         sig["confidence"] = _ce_conf
-                except Exception:
+                    print(f"[Signals] XAUUSD | playbook={sig['pattern_name']} | playbook_score={hit['score']:.1f} | confluence_conf={_ce_conf:.1f} | final_conf={sig['confidence']:.1f}")
+                except Exception as _ce_err:
                     sig["detail_lines"] = []
+                    print(f"[Signals] XAUUSD confluence error: {_ce_err}")
 
                 if ck_mod and hasattr(ck_mod, "validate_entry"):
                     try:
@@ -2734,11 +2738,14 @@ def _handle_signals(_msg: str, account: float = 300.0) -> str:
                     _conf_result = _sc(df, hit["direction"], symbol=_sig_instr)
                     sig["detail_lines"] = _conf_result.get("detail_lines", [])
                     sig["confluence_result"] = _conf_result
+                    sig["confluence_score"]  = _conf_result.get("confluence_score", 0)
                     _ce_conf = _conf_result.get("confidence", 0)
                     if _ce_conf > 0:
                         sig["confidence"] = _ce_conf
-                except Exception:
+                    print(f"[Signals] {_sig_instr} | playbook={sig['pattern_name']} | playbook_score={hit['score']:.1f} | confluence_conf={_ce_conf:.1f} | final_conf={sig['confidence']:.1f}")
+                except Exception as _ce_err:
                     sig["detail_lines"] = []
+                    print(f"[Signals] {_sig_instr} confluence error: {_ce_err}")
 
                 if ck_mod and hasattr(ck_mod, "validate_entry"):
                     try:

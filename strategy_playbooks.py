@@ -1083,6 +1083,8 @@ def get_active_playbooks(
     if news_sentiment is None:
         news_sentiment = {}
 
+    print(f"[Playbooks] get_active_playbooks() called | instrument={instrument} | df_rows={len(df) if df is not None else 0} | top_n={top_n}")
+
     # ── FIX 2: Volume pre-filter — no signals when nobody is trading ──────────
     try:
         from volume_analyzer import VolumeAnalyzer
@@ -1128,6 +1130,11 @@ def get_active_playbooks(
 
         results.append({
             "playbook":        pb,
+            # ── Normalized top-level keys (auto_trader + UI consume these) ──
+            "name":            pb["name"],
+            "confidence":      score,          # float 0-10 from conditions_met ratio
+            "confluence_score": passed,         # int — number of conditions passed
+            # ────────────────────────────────────────────────────────────────
             "direction":       direction,
             "score":           score,
             "conditions_met":  passed,
@@ -1144,6 +1151,7 @@ def get_active_playbooks(
 
     # ── Promote instrument's primary strategy to SETUP 1 ─────────────────────
     primary_key = INSTRUMENT_PRIMARY.get(instrument)
+    print(f"[Playbooks] {len(results)} signals scored before promotion | primary_key={primary_key}")
     if primary_key:
         primary_idx = next(
             (i for i, r in enumerate(results)
@@ -1163,6 +1171,9 @@ def get_active_playbooks(
                 _entry, _sl, _tp = format_playbook_signal(pb, df, _dir)
                 results.insert(0, {
                     "playbook":         pb,
+                    "name":             pb["name"],
+                    "confidence":       _score,
+                    "confluence_score": _passed,
                     "direction":        _dir,
                     "score":            _score,
                     "conditions_met":   _passed,
@@ -1179,7 +1190,10 @@ def get_active_playbooks(
             results[0]["is_primary"] = True
     # ─────────────────────────────────────────────────────────────────────────
 
-    return results[:top_n]
+    final = results[:top_n]
+    for _i, _r in enumerate(final):
+        print(f"[Playbooks] SETUP {_i+1}: name={_r.get('name')} | confidence={_r.get('confidence')} | confluence_score={_r.get('confluence_score')} | direction={_r.get('direction')} | entry={_r.get('entry')}")
+    return final
 
 
 # ══════════════════════════════════════════════════════════════════════════════

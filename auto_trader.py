@@ -994,20 +994,38 @@ def _tick(state: dict) -> None:
 
         # Log what we see
         if signals:
-            best = signals[0]
-            pb_name  = best["playbook"].get("name", "?")
-            pb_score = best["score"]
-            pb_dir   = best["direction"]
-            # Score is 0-10; convert to 0-100 for confidence threshold comparison
-            conf_pct = pb_score * 10
-            _cmet    = best.get("conditions_met", 0)
-            _ctot    = best.get("total_conditions", 1)
-            _qualifies = conf_pct >= cfg["min_confidence"] and _cmet >= 3
-            print(f"[AutoTrader] {instr}: conf={conf_pct:.0f}% checklist={_cmet}/{_ctot} → {'FIRE' if _qualifies else 'SKIP'} | {pb_name}")
+            best     = signals[0]
+            # Use normalized top-level keys (added to get_active_playbooks results)
+            pb_name  = best.get("name") or best["playbook"].get("name", "?")
+            pb_score = best.get("confidence", best.get("score", 0))  # 0-10
+            pb_dir   = best.get("direction", "long")
+
+            # ── Run real confluence scoring (same pipeline as the UI) ─────────
+            real_conf = pb_score  # default: playbook ratio score
+            ce_confluence_score = best.get("confluence_score", 0)
+            try:
+                from confluence_engine import score_confluences as _sc
+                _ce_result = _sc(df, pb_dir, symbol=instr)
+                _ce_conf   = _ce_result.get("confidence", 0)
+                ce_confluence_score = _ce_result.get("confluence_score", ce_confluence_score)
+                if _ce_conf > 0:
+                    real_conf = _ce_conf          # 0-10 real weighted score
+                    print(f"[AutoTrader] {instr}: confluence_engine score={real_conf:.1f}/10")
+            except Exception as _ce_err:
+                print(f"[AutoTrader] {instr}: confluence_engine unavailable — {_ce_err}")
+
+            # Convert to 0-100 scale for min_confidence threshold
+            conf_pct   = real_conf * 10
+            conds_met  = best.get("conditions_met", 0)
+            total_conds = best.get("total_conditions", 1)
+            checklist_ok = conds_met >= 3
+            _qualifies   = conf_pct >= cfg["min_confidence"] and checklist_ok
+
+            print(f"[AutoTrader] {instr}: conf={conf_pct:.0f}% checklist={conds_met}/{total_conds} confluence={ce_confluence_score} → {'FIRE' if _qualifies else 'SKIP'} | {pb_name}")
             log_activity(
                 state,
-                f"🔍 {instr} scan | best={pb_name} | score={pb_score}/10 "
-                f"({conf_pct:.0f}%) | dir={pb_dir} | price={live_price}",
+                f"🔍 {instr} scan | best={pb_name} | conf={real_conf:.1f}/10 "
+                f"({conf_pct:.0f}%) | confluence={ce_confluence_score} | dir={pb_dir} | price={live_price}",
                 "SCAN",
             )
         else:
@@ -1016,15 +1034,25 @@ def _tick(state: dict) -> None:
             continue
 
         # Evaluate top signal
-        best     = signals[0]
-        pb_score = best["score"]
-        pb_dir   = best["direction"]
-        conf_pct = pb_score * 10   # scale 0-10 → 0-100 to match min_confidence
-        pb_name  = best["playbook"].get("id", best["playbook"].get("name", "AUTO"))
+        best        = signals[0]
+        pb_dir      = best.get("direction", "long")
+        pb_name     = best.get("name") or best["playbook"].get("id", best["playbook"].get("name", "AUTO"))
 
-        # Check conditions_met (checklist >= 3/5)
-        conds_met   = best.get("conditions_met", 0)
-        total_conds = best.get("total_conditions", 1)
+        # ── Get real confluence confidence (same engine as UI) ────────────────
+        real_conf   = best.get("confidence", best.get("score", 0))
+        ce_confluence_score = best.get("confluence_score", 0)
+        try:
+            from confluence_engine import score_confluences as _sc2
+            _ce2 = _sc2(df, pb_dir, symbol=instr)
+            if _ce2.get("confidence", 0) > 0:
+                real_conf = _ce2["confidence"]
+                ce_confluence_score = _ce2.get("confluence_score", ce_confluence_score)
+        except Exception:
+            pass
+
+        conf_pct     = real_conf * 10   # scale 0-10 → 0-100
+        conds_met    = best.get("conditions_met", 0)
+        total_conds  = best.get("total_conditions", 1)
         checklist_ok = conds_met >= 3
 
         # Threshold: confidence >= 70 AND checklist >= 3
@@ -1032,7 +1060,7 @@ def _tick(state: dict) -> None:
             log_activity(
                 state,
                 f"✅ {instr}: signal QUALIFIES — conf={conf_pct:.0f}% "
-                f"checklist={conds_met}/{total_conds} | opening trade",
+                f"checklist={conds_met}/{total_conds} confluence={ce_confluence_score} | opening trade",
                 "SIGNAL",
             )
             open_trade(
@@ -1042,7 +1070,7 @@ def _tick(state: dict) -> None:
                 price     = live_price,
                 conf      = conf_pct,
                 strategy  = pb_name,
-                reason    = f"Playbook score {pb_score}/10, {conds_met}/{total_conds} conditions",
+                reason    = f"Confluence conf={real_conf:.1f}/10, checklist={conds_met}/{total_conds}",
             )
         else:
             log_activity(
