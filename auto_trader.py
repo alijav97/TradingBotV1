@@ -52,11 +52,11 @@ STATE_FILE = (
 # ─────────────────────────────────────────────────────────────────────────────
 INSTRUMENTS: dict[str, dict] = {
     "XAUUSD": {
-        "session_start":      8,
-        "session_end":        22,
+        "session_start":      0,
+        "session_end":        24,
         "kill_zones":         [(8, 11), (13, 16)],
         "max_trades_per_day": 5,
-        "min_confidence":     65,
+        "min_confidence":     70,
         "trades_file":        "paper_trades.json",
         # Adaptive ATR settings
         "atr_sl_mult":        1.5,
@@ -72,11 +72,11 @@ INSTRUMENTS: dict[str, dict] = {
         "grade":              "A",
     },
     "WTI": {
-        "session_start":      13,
-        "session_end":        22,
+        "session_start":      0,
+        "session_end":        24,
         "kill_zones":         [(13, 16)],
         "max_trades_per_day": 5,
-        "min_confidence":     65,
+        "min_confidence":     70,
         "trades_file":        "data/paper_trades_WTI.json",
         "atr_sl_mult":        1.5,
         "atr_tp_mult":        4.5,
@@ -90,11 +90,11 @@ INSTRUMENTS: dict[str, dict] = {
         "grade":              "B",
     },
     "US30": {
-        "session_start":      13,
-        "session_end":        22,
+        "session_start":      0,
+        "session_end":        24,
         "kill_zones":         [(13, 16)],
         "max_trades_per_day": 5,
-        "min_confidence":     65,
+        "min_confidence":     70,
         "trades_file":        "data/paper_trades_US30.json",
         "atr_sl_mult":        2.0,
         "atr_tp_mult":        6.0,
@@ -108,8 +108,8 @@ INSTRUMENTS: dict[str, dict] = {
         "grade":              "B",
     },
     "NAS100": {
-        "session_start":      13,
-        "session_end":        22,
+        "session_start":      0,
+        "session_end":        24,
         "kill_zones":         [(13, 16)],
         "max_trades_per_day": 5,
         "min_confidence":     65,
@@ -126,11 +126,11 @@ INSTRUMENTS: dict[str, dict] = {
         "grade":              "B",
     },
     "GBPUSD": {
-        "session_start":      7,
-        "session_end":        17,
+        "session_start":      0,
+        "session_end":        24,
         "kill_zones":         [(8, 11)],
         "max_trades_per_day": 5,
-        "min_confidence":     65,
+        "min_confidence":     70,
         "trades_file":        "data/paper_trades_GBPUSD.json",
         "atr_sl_mult":        1.5,
         "atr_tp_mult":        4.5,
@@ -144,11 +144,11 @@ INSTRUMENTS: dict[str, dict] = {
         "grade":              "C",
     },
     "EURUSD": {
-        "session_start":      7,
-        "session_end":        17,
+        "session_start":      0,
+        "session_end":        24,
         "kill_zones":         [(7, 10)],
         "max_trades_per_day": 5,
-        "min_confidence":     65,
+        "min_confidence":     70,
         "trades_file":        "data/paper_trades_EURUSD.json",
         "atr_sl_mult":        1.5,
         "atr_tp_mult":        4.5,
@@ -866,11 +866,134 @@ def stop_auto_trader() -> None:
 #  Main loop
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _fetch_ohlcv(instr: str):
+    """Fetch recent OHLCV data via yfinance for signal evaluation."""
+    try:
+        import yfinance as yf
+        import pandas as pd
+        ticker   = _YF_MAP[instr]
+        interval = "1h" if instr not in ("XAUUSD",) else "1h"
+        hist = yf.Ticker(ticker).history(period="30d", interval=interval)
+        if hist.empty or len(hist) < 50:
+            return None
+        hist.columns = [c.lower() for c in hist.columns]
+        return hist
+    except Exception as e:
+        return None
+
+
 def _tick(state: dict) -> None:
-    """One evaluation cycle across all instruments."""
+    """One evaluation cycle across all instruments — scans signals and opens trades."""
     state["last_tick"] = datetime.now(GST).isoformat()
+
+    # ── 1. Monitor open positions first ──────────────────────────────────────
     monitor_open_trades(state)
+
+    # ── 2. Scan each instrument for new signals ───────────────────────────────
+    try:
+        from strategy_playbooks import get_active_playbooks, INSTRUMENT_PRIMARY
+        _pb_available = True
+    except ImportError:
+        _pb_available = False
+
+    for instr in sorted(INSTRUMENTS, key=lambda x: INSTRUMENTS[x].get("priority", 99)):
+        cfg = INSTRUMENTS[instr]
+
+        # Skip if already have an open trade for this instrument
+        _existing = load_trades(instr)
+        if any(t.get("status") == "OPEN" for t in _existing):
+            log_activity(state, f"⏭️ {instr}: skip scan — trade already open", "SCAN")
+            continue
+
+        # Skip if daily limit reached
+        if trades_today_count(state, instr) >= cfg["max_trades_per_day"]:
+            log_activity(state, f"⏭️ {instr}: skip scan — daily limit reached", "SCAN")
+            continue
+
+        # Fetch OHLCV data
+        df = _fetch_ohlcv(instr)
+        if df is None:
+            log_activity(state, f"⚠️ {instr}: no OHLCV data, skipping", "SCAN")
+            continue
+
+        # Get live price
+        try:
+            live_price = float(df["close"].iloc[-1])
+        except Exception:
+            log_activity(state, f"⚠️ {instr}: could not read price, skipping", "SCAN")
+            continue
+
+        # Run playbook signals
+        signals: list[dict] = []
+        if _pb_available:
+            try:
+                signals = get_active_playbooks(
+                    df,
+                    news_sentiment={},
+                    top_n=3,
+                    instrument=instr,
+                )
+            except Exception as e:
+                log_activity(state, f"⚠️ {instr}: playbook error — {e}", "SCAN")
+
+        # Log what we see
+        if signals:
+            best = signals[0]
+            pb_name  = best["playbook"].get("name", "?")
+            pb_score = best["score"]
+            pb_dir   = best["direction"]
+            # Score is 0-10; convert to 0-100 for confidence threshold comparison
+            conf_pct = pb_score * 10
+            log_activity(
+                state,
+                f"🔍 {instr} scan | best={pb_name} | score={pb_score}/10 "
+                f"({conf_pct:.0f}%) | dir={pb_dir} | price={live_price}",
+                "SCAN",
+            )
+        else:
+            log_activity(state, f"🔍 {instr}: no signals this cycle", "SCAN")
+            continue
+
+        # Evaluate top signal
+        best     = signals[0]
+        pb_score = best["score"]
+        pb_dir   = best["direction"]
+        conf_pct = pb_score * 10   # scale 0-10 → 0-100 to match min_confidence
+        pb_name  = best["playbook"].get("id", best["playbook"].get("name", "AUTO"))
+
+        # Check conditions_met (checklist >= 3/5)
+        conds_met   = best.get("conditions_met", 0)
+        total_conds = best.get("total_conditions", 1)
+        checklist_ok = conds_met >= 3
+
+        # Threshold: confidence >= 70 AND checklist >= 3
+        if conf_pct >= cfg["min_confidence"] and checklist_ok:
+            log_activity(
+                state,
+                f"✅ {instr}: signal QUALIFIES — conf={conf_pct:.0f}% "
+                f"checklist={conds_met}/{total_conds} | opening trade",
+                "SIGNAL",
+            )
+            open_trade(
+                state     = state,
+                instr     = instr,
+                direction = pb_dir.upper(),
+                price     = live_price,
+                conf      = conf_pct,
+                strategy  = pb_name,
+                reason    = f"Playbook score {pb_score}/10, {conds_met}/{total_conds} conditions",
+            )
+        else:
+            log_activity(
+                state,
+                f"⛔ {instr}: signal below threshold — "
+                f"conf={conf_pct:.0f}% (need {cfg['min_confidence']}%) "
+                f"checklist={conds_met}/{total_conds} (need >=3)",
+                "SCAN",
+            )
+
     save_state(state)
+
 
 
 def run_loop(once: bool = False) -> None:

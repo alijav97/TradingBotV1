@@ -380,6 +380,201 @@ PLAYBOOKS: dict[str, dict[str, Any]] = {
         "win_rate_expected": 65,
         "notes":            "Strongest signal on H4 and D1. Golden Cross on gold is very reliable.",
     },
+
+    # ── PRIMARY BACKTESTED STRATEGIES PER INSTRUMENT ─────────────────────────
+
+    # ── 13 ────────────────────────────────────────────────────────────────────
+    "gold_dxy_divergence": {
+        "id":               "gold_dxy_divergence",
+        "name":             "Gold/DXY Divergence",
+        "asset":            ["XAUUSD"],
+        "timeframe":        "H1",
+        "conditions_long":  [
+            "DXY falling or below 5-period EMA",
+            "gold price holding above EMA50",
+            "RSI above 45 and rising",
+            "gold higher low while DXY makes lower low (divergence)",
+            "bullish candle closes above previous high",
+        ],
+        "conditions_short": [
+            "DXY rising or above 5-period EMA",
+            "gold price below EMA50",
+            "RSI below 55 and falling",
+            "gold lower high while DXY makes higher high (divergence)",
+            "bearish candle closes below previous low",
+        ],
+        "entry":            "close of divergence confirmation candle",
+        "stop_loss":        "1.5x ATR beyond divergence pivot",
+        "take_profit":      "3x stop loss distance",
+        "risk_reward":      3.0,
+        "best_session":     ["London", "LondonNY"],
+        "win_rate_expected": 64,
+        "primary_for":      ["XAUUSD"],
+        "notes":            "XAUUSD primary strategy. DXY inverse correlation is gold's most reliable macro driver.",
+    },
+
+    # ── 14 ────────────────────────────────────────────────────────────────────
+    "squeeze_bos": {
+        "id":               "squeeze_bos",
+        "name":             "Squeeze + Break of Structure",
+        "asset":            ["NAS100", "US30"],
+        "timeframe":        "H1",
+        "conditions_long":  [
+            "Bollinger Bands inside Keltner Channel (squeeze active)",
+            "squeeze fires (BB expands outside KC)",
+            "price breaks above recent swing high (BOS)",
+            "EMA50 pointing upward",
+            "RSI crosses above 55",
+        ],
+        "conditions_short": [
+            "Bollinger Bands inside Keltner Channel (squeeze active)",
+            "squeeze fires (BB expands outside KC)",
+            "price breaks below recent swing low (BOS)",
+            "EMA50 pointing downward",
+            "RSI crosses below 45",
+        ],
+        "entry":            "close of first candle after BOS confirmation",
+        "stop_loss":        "below/above the squeeze pivot",
+        "take_profit":      "3x stop loss distance",
+        "risk_reward":      3.0,
+        "best_session":     ["LondonNY", "NewYork"],
+        "win_rate_expected": 62,
+        "primary_for":      ["NAS100"],
+        "notes":            "NAS100 primary strategy. Momentum squeeze into structure break is highly reliable on indices.",
+    },
+
+    # ── 15 ────────────────────────────────────────────────────────────────────
+    "rsi_divergence": {
+        "id":               "rsi_divergence",
+        "name":             "RSI Divergence Reversal",
+        "asset":            ["US30", "NAS100", "XAUUSD"],
+        "timeframe":        "H1",
+        "conditions_long":  [
+            "price makes lower low",
+            "RSI makes higher low (bullish divergence)",
+            "RSI below 50 at divergence point",
+            "price above key support level",
+            "bullish confirmation candle closes",
+        ],
+        "conditions_short": [
+            "price makes higher high",
+            "RSI makes lower high (bearish divergence)",
+            "RSI above 50 at divergence point",
+            "price below key resistance level",
+            "bearish confirmation candle closes",
+        ],
+        "entry":            "close of confirmation candle after divergence",
+        "stop_loss":        "1.5x ATR beyond divergence extreme",
+        "take_profit":      "3x stop loss distance",
+        "risk_reward":      3.0,
+        "best_session":     ["London", "NewYork"],
+        "win_rate_expected": 61,
+        "primary_for":      ["US30"],
+        "notes":            "US30 primary strategy. RSI divergence on indices is a high-probability reversal signal.",
+    },
+
+    # ── 16 ────────────────────────────────────────────────────────────────────
+    "eur_frankfurt_london": {
+        "id":               "eur_frankfurt_london",
+        "name":             "EUR Frankfurt→London Open",
+        "asset":            ["EURUSD"],
+        "timeframe":        "M30",
+        "conditions_long":  [
+            "Frankfurt open (07:00 UTC) forms bullish bias",
+            "price holds above Asian session high",
+            "London open (08:00 UTC) continues move",
+            "RSI above 50 at London open",
+            "EMA50 trending upward on M30",
+        ],
+        "conditions_short": [
+            "Frankfurt open (07:00 UTC) forms bearish bias",
+            "price holds below Asian session low",
+            "London open (08:00 UTC) continues move",
+            "RSI below 50 at London open",
+            "EMA50 trending downward on M30",
+        ],
+        "entry":            "close of first 30-min London candle confirming direction",
+        "stop_loss":        "opposite side of Frankfurt range",
+        "take_profit":      "3x stop loss distance",
+        "risk_reward":      3.0,
+        "best_session":     ["London"],
+        "win_rate_expected": 60,
+        "primary_for":      ["EURUSD"],
+        "notes":            "EURUSD primary strategy. Frankfurt→London momentum continuation is the EUR's signature move.",
+    },
+
+    # ── 17 ────────────────────────────────────────────────────────────────────
+    "gbp_asian_range": {
+        "id":               "gbp_asian_range",
+        "name":             "GBP Asian Range Breakout",
+        "asset":            ["GBPUSD"],
+        "timeframe":        "M30",
+        "conditions_long":  [
+            "Asian session (00:00-07:00 UTC) forms tight range",
+            "range size below 1x ATR",
+            "London open breaks above Asian range high",
+            "confirmation candle closes above range",
+            "RSI above 50",
+        ],
+        "conditions_short": [
+            "Asian session (00:00-07:00 UTC) forms tight range",
+            "range size below 1x ATR",
+            "London open breaks below Asian range low",
+            "confirmation candle closes below range",
+            "RSI below 50",
+        ],
+        "entry":            "close of breakout candle at London open",
+        "stop_loss":        "opposite end of Asian range",
+        "take_profit":      "3x stop loss distance",
+        "risk_reward":      3.0,
+        "best_session":     ["London"],
+        "win_rate_expected": 59,
+        "primary_for":      ["GBPUSD"],
+        "notes":            "GBPUSD primary strategy. GBP's tightest Asian ranges produce the cleanest London breakouts.",
+    },
+
+    # ── 18 ────────────────────────────────────────────────────────────────────
+    "nas_pullback_ema": {
+        "id":               "nas_pullback_ema",
+        "name":             "NAS/WTI Pullback to EMA",
+        "asset":            ["WTI", "NAS100"],
+        "timeframe":        "H1",
+        "conditions_long":  [
+            "price above EMA200",
+            "EMA50 above EMA200",
+            "price pulls back to EMA50 zone (within 0.3 ATR)",
+            "RSI between 40 and 55 at pullback",
+            "bullish rejection candle at EMA50",
+        ],
+        "conditions_short": [
+            "price below EMA200",
+            "EMA50 below EMA200",
+            "price pulls back to EMA50 zone (within 0.3 ATR)",
+            "RSI between 45 and 60 at pullback",
+            "bearish rejection candle at EMA50",
+        ],
+        "entry":            "close of rejection candle at EMA50",
+        "stop_loss":        "1.5x ATR beyond EMA50",
+        "take_profit":      "3x stop loss distance",
+        "risk_reward":      3.0,
+        "best_session":     ["LondonNY", "NewYork"],
+        "win_rate_expected": 63,
+        "primary_for":      ["WTI"],
+        "notes":            "WTI primary strategy. Oil and NAS trend strongly — pullbacks to EMA50 in trend direction are high-probability.",
+    },
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  INSTRUMENT PRIMARY STRATEGY MAP
+#  These strategies always appear as SETUP 1 when they fire.
+# ══════════════════════════════════════════════════════════════════════════════
+INSTRUMENT_PRIMARY: dict[str, str] = {
+    "XAUUSD": "gold_dxy_divergence",
+    "NAS100": "squeeze_bos",
+    "US30":   "rsi_divergence",
+    "EURUSD": "eur_frankfurt_london",
+    "GBPUSD": "gbp_asian_range",
+    "WTI":    "nas_pullback_ema",
 }
 
 
@@ -857,9 +1052,11 @@ def get_active_playbooks(
     df: pd.DataFrame,
     news_sentiment: dict | None = None,
     top_n: int = 3,
+    instrument: str = "XAUUSD",
 ) -> list[dict[str, Any]]:
     """
-    Check all 12 playbooks against current market data.
+    Check all 18 playbooks against current market data.
+    The backtested primary strategy for `instrument` always appears as SETUP 1.
 
     Parameters
     ----------
@@ -867,6 +1064,7 @@ def get_active_playbooks(
     news_sentiment  : dict from morning_briefing / news_filter
                       expected keys: overall_risk, gold.bias
     top_n           : how many active playbooks to return
+    instrument      : canonical instrument ID (e.g. "XAUUSD", "NAS100")
 
     Returns
     -------
@@ -943,6 +1141,44 @@ def get_active_playbooks(
 
     # Sort by score descending, then by win_rate_expected
     results.sort(key=lambda x: (x["score"], x["playbook"]["win_rate_expected"]), reverse=True)
+
+    # ── Promote instrument's primary strategy to SETUP 1 ─────────────────────
+    primary_key = INSTRUMENT_PRIMARY.get(instrument)
+    if primary_key:
+        primary_idx = next(
+            (i for i, r in enumerate(results)
+             if r["playbook"].get("id") == primary_key),
+            None,
+        )
+        if primary_idx is not None and primary_idx != 0:
+            # Move primary to front
+            results.insert(0, results.pop(primary_idx))
+        elif primary_idx is None:
+            # Primary strategy didn't fire — force-evaluate it anyway
+            pb = PLAYBOOKS.get(primary_key)
+            if pb:
+                _dir = "short" if (gold_bias in ("sell", "short") or is_bearish) else "long"
+                _total, _passed, _met = _score_playbook(primary_key, df, _dir, news_sentiment)
+                _score = round(min(10.0, _passed / _total * 10), 1) if _total > 0 else 0.0
+                _entry, _sl, _tp = format_playbook_signal(pb, df, _dir)
+                results.insert(0, {
+                    "playbook":         pb,
+                    "direction":        _dir,
+                    "score":            _score,
+                    "conditions_met":   _passed,
+                    "total_conditions": _total,
+                    "met_list":         _met,
+                    "entry":            _entry,
+                    "stop_loss":        _sl,
+                    "take_profit":      _tp,
+                    "risk_reward":      pb["risk_reward"],
+                    "is_primary":       True,
+                })
+        # Tag the primary result
+        if results:
+            results[0]["is_primary"] = True
+    # ─────────────────────────────────────────────────────────────────────────
+
     return results[:top_n]
 
 
