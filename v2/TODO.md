@@ -127,12 +127,12 @@ Built remaining 20+ files across all 10 modules using 6 parallel agents.
 
 **Remaining (integration + deployment):**
 - [ ] Set up `.env` file with real credentials
-- [ ] Install TA-Lib C library on VPS: `apt-get install libta-lib-dev`
 - [ ] `pip install -r v2/requirements.txt`
 - [ ] Configure MT5 broker credentials in `.env`
 - [ ] Configure Binance API keys (testnet first) in `.env`
 - [ ] Set Telegram bot token + chat ID in `.env`
-- [ ] Run `python v2/main.py` — bot starts, paper trades begin
+- [ ] **Run warm-start backtest: `python -m v2.backtest.run_backtest --days 180`**
+- [ ] Run `python v2/main.py` — bot starts with pre-trained ML, live trades begin
 - [ ] Monitor first paper trades via Telegram
 - [ ] After 50 paper trades: ML layer activates automatically
 
