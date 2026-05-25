@@ -849,8 +849,10 @@ def get_live_price(symbol: str = "XAUUSD") -> dict[str, Any]:
             import pandas as _pd_yf
             _yf_sym    = _YF_SYMBOLS_P2.get(symbol, "GC=F")
             ticker_obj = _yf.Ticker(_yf_sym)
-            fast_df    = ticker_obj.history(interval="1m", period="1d",
+            fast_df    = ticker_obj.history(interval="5m", period="5d",
                                             auto_adjust=True)
+            if fast_df is None or fast_df.empty:
+                fast_df = ticker_obj.history(period="1mo", interval="1d", auto_adjust=True)
             if fast_df is not None and not fast_df.empty:
                 last_price = float(fast_df["Close"].iloc[-1])
                 last_time  = fast_df.index[-1]
@@ -1013,7 +1015,10 @@ def get_price_for_instrument(instrument: str = "XAUUSD") -> float:
     return 0.0
 
 
-def get_live_price(instrument: str = "XAUUSD") -> float:  # type: ignore[misc]
-    """Convenience alias for get_price_for_instrument()."""
-    return get_price_for_instrument(instrument)
+def get_price_float(instrument: str = "XAUUSD") -> float:
+    """Returns a plain float price (no dict). Use get_live_price() for the full dict."""
+    result = get_live_price(instrument)
+    if isinstance(result, dict):
+        return float(result.get("price") or 0)
+    return float(result or 0)
 
