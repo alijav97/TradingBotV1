@@ -898,7 +898,7 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
 
     # ── Signal fields ────────────────────────────────────────────────────────
     direction = str(sig.get("direction", "SHORT")).upper()
-    asset     = sig.get("asset", "XAUUSD")
+    asset     = sig.get("asset", st.session_state.get("instrument", "XAUUSD"))
     pattern   = sig.get("pattern_name", sig.get("name", "Strategy"))
     pb_id     = sig.get("playbook_id", "")
     source    = sig.get("source", "rules")
@@ -906,6 +906,34 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
     entry     = float(sig.get("entry",       0) or 0)
     sl        = float(sig.get("stop_loss",   0) or 0)
     tp        = float(sig.get("take_profit", 0) or 0)
+
+    # ── Grade multiplier from INSTRUMENT_RISK_CONFIG ─────────────────────────
+    _instr_cfg   = INSTRUMENT_RISK_CONFIG.get(asset, INSTRUMENT_RISK_CONFIG.get("XAUUSD", {}))
+    _instr_grade = _instr_cfg.get("grade", "A")
+    _grade_mult  = {"A": 1.0, "B": 0.75, "C": 0.50}.get(_instr_grade, 1.0)
+
+    # ── Recalculate SL/TP using true ATR (never reuse a fixed value) ──────────
+    _df_live_atr = st.session_state.get("live_df")
+    if entry > 0 and _df_live_atr is not None and not _df_live_atr.empty:
+        try:
+            from atr_sl_engine import calculate_dynamic_sl as _calc_dyn_sl
+            _cur_session = st.session_state.get("session_name", "London")
+            _cur_regime  = st.session_state.get("regime",       "RANGING")
+            _geo_mult    = float(sig.get("sl_atr_multiplier", 0.0) or 0.0)
+            _dyn = _calc_dyn_sl(
+                _df_live_atr,
+                direction.lower(),
+                entry,
+                session=_cur_session,
+                regime=str(_cur_regime),
+                geo_multiplier=_geo_mult,
+                strategy_name=pattern,
+            )
+            if _dyn.get("sl_price") and _dyn["sl_price"] > 0:
+                sl = round(float(_dyn["sl_price"]),  2)
+                tp = round(float(_dyn["tp1_price"]), 2)   # TP1 = 1.5× SL dist
+        except Exception:
+            pass  # keep original SL/TP from signal on any error
 
     # ── Source tag ───────────────────────────────────────────────────────────
     pb_num = ""
@@ -916,8 +944,6 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
             pb_num = f" {keys.index(pb_id)+1}"
     src_tag = f"Playbook{pb_num}" if source == "playbook" else f"Rules · Tier {sig.get('tier','?')}"
 
-    sl_dist = abs(entry - sl)   if sl else 0.0
-    tp_dist = abs(entry - tp)   if tp else 0.0
     sl_sign = "+" if direction == "SHORT" else "−"
     tp_sign = "−" if direction == "SHORT" else "+"
     conf_f  = f"{float(conf):.1f}/10"
@@ -926,36 +952,48 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
     _geo_sl_mult  = float(sig.get("sl_atr_multiplier", 0.0) or 0.0)
     _atr_val      = float(sig.get("atr", 0.0) or 0.0)
     if _atr_val == 0.0:
-        # Try to read ATR from df if available
         try:
             _df_live = st.session_state.get("live_df")
             if _df_live is not None and not _df_live.empty:
                 _atr_val = float(_df_live["atr"].iloc[-1])
         except Exception:
-            _atr_val = 20.0  # safe fallback
+            _atr_val = 20.0
     if _atr_val == 0.0:
         _atr_val = 20.0
-    _geo_sl_adj   = _geo_sl_mult * _atr_val   # extra SL buffer in $
+    _geo_sl_adj = _geo_sl_mult * _atr_val
 
     SEP  = "═" * 47
     DASH = "─" * 47
 
-    # ── Lot sizing ───────────────────────────────────────────────────────────
+    # ── Lot sizing — 2% risk formula with grade multiplier ───────────────────
+    # sl_dist is not yet computed here; we derive it directly from entry/sl
+    _sl_dist_for_lots = abs(entry - sl) if sl and entry else 0.0
+    risk_usd_target   = account * (risk_pct / 100)          # e.g. $20 on $1000
+    if _sl_dist_for_lots > 0:
+        # lots = risk_amount / (sl_distance × pip_value_per_lot)
+        # For gold: 1 lot = 100oz, $1 move = $100, so pip_value factor = 100
+        _base_lots  = risk_usd_target / (_sl_dist_for_lots * 100)
+        _base_lots  = round(max(0.01, _base_lots), 2)
+    else:
+        _base_lots  = 0.01
+    # Apply grade multiplier (A=100%, B=75%, C=50%)
+    _graded_lots = max(0.01, round(_base_lots * _grade_mult, 2))
+    # Also apply regime size multiplier if present
+    size_mult    = float(sig.get("size_multiplier", 1.0))
+    final_lots   = max(0.01, round(_graded_lots * size_mult, 2))
+
     pos       = _calc_pos(entry, sl, settings)
-    size_mult = float(sig.get("size_multiplier", 1.0))
     not_tradeable = not pos.get("tradeable", True)
     if not_tradeable:
         final_lots        = 0.01
-        actual_risk       = sl_dist * 0.01 * 100
+        actual_risk       = _sl_dist_for_lots * 0.01 * 100
         actual_reward     = actual_risk * min_rr
         risk_actual_pct   = round(actual_risk   / account * 100, 1)
         reward_actual_pct = round(actual_reward / account * 100, 1)
         _reject_reason    = pos.get("reason", "Setup not tradeable with current balance")
     else:
-        base_lots         = float(pos.get("lots", 0.01))
-        final_lots        = max(0.01, round(base_lots * size_mult, 2))
-        actual_risk       = sl_dist * final_lots * 100
-        actual_reward     = float(pos.get("reward_usd", actual_risk * min_rr)) * size_mult
+        actual_risk       = _sl_dist_for_lots * final_lots * 100
+        actual_reward     = actual_risk * min_rr
         risk_actual_pct   = round(actual_risk   / account * 100, 1)
         reward_actual_pct = round(actual_reward / account * 100, 1)
         _reject_reason    = ""
@@ -969,18 +1007,14 @@ def _render_trade_card(sig: dict, idx: int = 1, account: float = 0.0) -> str:
     _sess_note  = _sess_adj.get("session_note", "")
     _sess_rec   = _sess_adj.get("trading_recommended", True)
 
-    # ── TP1 / TP2 (partial take-profit) ─────────────────────────────────────
-    is_long = direction == "LONG"
-    if partial_tp and tp:
-        tp1 = tp          # 50% position
-        # TP2 is the full 1:3 from SL distance
-        rr3_dist = sl_dist * 3
-        tp2 = round(entry + rr3_dist if is_long else entry - rr3_dist, 2)
-        tp1_dist = abs(entry - tp1)
-        tp2_dist = abs(entry - tp2)
-    else:
-        tp1 = tp2 = tp
-        tp1_dist = tp2_dist = tp_dist
+    # ── TP1 / TP2 — always 1.5× and 3.0× SL distance ────────────────────────
+    is_long  = direction == "LONG"
+    sl_dist  = abs(entry - sl) if sl else 0.0
+    tp1_dist = sl_dist * 1.5
+    tp2_dist = sl_dist * 3.0
+    tp1 = round(entry + tp1_dist if is_long else entry - tp1_dist, 2)
+    tp2 = round(entry + tp2_dist if is_long else entry - tp2_dist, 2)
+    tp_dist  = tp1_dist  # used in rr_actual below
 
     rr_actual = f"1:{tp_dist/sl_dist:.1f}" if sl_dist > 0 else "—"
 

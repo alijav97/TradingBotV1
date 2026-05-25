@@ -18,25 +18,26 @@ import pandas as pd
 
 # ── Session base multipliers ──────────────────────────────────────────────────
 _SESSION_MULT: dict[str, float] = {
-    "London":    1.5,
-    "LondonNY":  1.5,   # Overlap
-    "Overlap":   1.5,
-    "NewYork":   1.5,
-    "Asian":     2.0,
-    "Off-Hours": 2.5,
-    "OffHours":  2.5,
+    "London":    1.0,
+    "LondonNY":  1.0,   # Overlap
+    "Overlap":   1.0,
+    "NewYork":   0.9,
+    "NY":        0.9,
+    "Asian":     1.2,
+    "Off-Hours": 1.5,
+    "OffHours":  1.5,
 }
 
 # ── Regime multipliers ────────────────────────────────────────────────────────
 _REGIME_MULT: dict[str, float] = {
-    "TRENDING_STRONG":    0.9,
-    "TRENDING_WEAK":      1.0,
-    "TRENDING":           1.0,
+    "TRENDING_STRONG":    0.8,
+    "TRENDING_WEAK":      0.9,
+    "TRENDING":           0.8,
     "RANGING":            1.2,
     "VOLATILE_EXPANDING": 1.5,
     "VOLATILE":           1.5,
-    "SQUEEZE_BUILDING":   0.8,
-    "SQUEEZE":            0.8,
+    "SQUEEZE_BUILDING":   1.0,
+    "SQUEEZE":            1.0,
 }
 
 # ── Strategy-specific minimum multipliers ─────────────────────────────────────
@@ -175,10 +176,10 @@ def calculate_dynamic_sl(
 
     # ── STEP 9 — TP prices ────────────────────────────────────────────────────
     if is_long:
-        tp1_price = round(entry + final_sl_dist * 2.0,    2)
+        tp1_price = round(entry + final_sl_dist * 1.5,    2)
         tp2_price = round(entry + final_sl_dist * min_rr,  2)
     else:
-        tp1_price = round(entry - final_sl_dist * 2.0,    2)
+        tp1_price = round(entry - final_sl_dist * 1.5,    2)
         tp2_price = round(entry - final_sl_dist * min_rr,  2)
 
     # ── R:R ───────────────────────────────────────────────────────────────────
