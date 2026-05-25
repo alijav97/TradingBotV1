@@ -22,6 +22,7 @@ import json
 import os
 import time
 import sys
+import threading
 import traceback
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -167,6 +168,9 @@ ACCOUNT_BALANCE: float = 1000.0
 LEVERAGE:        int   = 10
 RR_RATIO:        float = 3.0
 RISK_PER_TRADE:  float = 0.02   # 2% risk per trade
+
+# Module-level background thread reference — prevents duplicate threads
+_bg_thread: threading.Thread | None = None
 
 NEWS_BLACKOUT: dict[str, list] = {
     "GBPUSD": [(1, 10, 2), (2, 10, 2)],
@@ -845,21 +849,67 @@ def get_status() -> dict:
 
 
 def start_auto_trader() -> None:
-    """Enable the auto trader (sets enabled=True in state)."""
+    """
+    Enable the auto trader and launch background scan thread.
+    Safe to call multiple times — won't spawn duplicate threads.
+    """
+    global _bg_thread
+
+    # Update state flags
     state = load_state()
     state["enabled"]    = True
+    state["running"]    = True
     state["started_at"] = datetime.now(GST).isoformat()
-    log_activity(state, "▶️ Auto trader STARTED via UI", "SYSTEM")
+    log_activity(state, "▶️ Auto trader STARTED — launching background thread", "SYSTEM")
     save_state(state)
+    print("[AutoTrader] start_auto_trader() called — checking thread")
+
+    # Only spawn if no live thread exists
+    if _bg_thread is not None and _bg_thread.is_alive():
+        print("[AutoTrader] Background thread already running — skipping spawn")
+        return
+
+    def _loop() -> None:
+        print("[AutoTrader] Background thread started")
+        _state = load_state()
+        _state["running"] = True
+        save_state(_state)
+        try:
+            while True:
+                _state = load_state()          # reload so stop is detected
+                if not _state.get("enabled", False):
+                    print("[AutoTrader] enabled=False detected — thread exiting")
+                    break
+                try:
+                    _tick(_state)
+                except Exception as _e:
+                    print(f"[AutoTrader] _tick error: {_e}")
+                    traceback.print_exc()
+                time.sleep(60)
+        finally:
+            _s = load_state()
+            _s["running"] = False
+            save_state(_s)
+            print("[AutoTrader] Background thread stopped")
+
+    _bg_thread = threading.Thread(target=_loop, daemon=True, name="AutoTrader")
+    _bg_thread.start()
+    print(f"[AutoTrader] Thread spawned: {_bg_thread.name} (id={_bg_thread.ident})")
 
 
 def stop_auto_trader() -> None:
-    """Disable the auto trader (sets enabled=False in state)."""
+    """Disable the auto trader — background thread will exit on next cycle."""
     state = load_state()
     state["enabled"] = False
     state["running"] = False
     log_activity(state, "⏹️ Auto trader STOPPED via UI", "SYSTEM")
     save_state(state)
+    print("[AutoTrader] stop_auto_trader() called — thread will exit on next cycle")
+
+
+def is_running() -> bool:
+    """Return True if the background thread is alive."""
+    return _bg_thread is not None and _bg_thread.is_alive()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -885,6 +935,7 @@ def _fetch_ohlcv(instr: str):
 def _tick(state: dict) -> None:
     """One evaluation cycle across all instruments — scans signals and opens trades."""
     state["last_tick"] = datetime.now(GST).isoformat()
+    print(f"[AutoTrader] Tick fired at {state['last_tick']} — scanning {len(INSTRUMENTS)} instruments")
 
     # ── 1. Monitor open positions first ──────────────────────────────────────
     monitor_open_trades(state)
@@ -899,20 +950,25 @@ def _tick(state: dict) -> None:
     for instr in sorted(INSTRUMENTS, key=lambda x: INSTRUMENTS[x].get("priority", 99)):
         cfg = INSTRUMENTS[instr]
 
+        print(f"[AutoTrader] Scanning {instr} ...")
+
         # Skip if already have an open trade for this instrument
         _existing = load_trades(instr)
         if any(t.get("status") == "OPEN" for t in _existing):
+            print(f"[AutoTrader] {instr}: SKIP — trade already open")
             log_activity(state, f"⏭️ {instr}: skip scan — trade already open", "SCAN")
             continue
 
         # Skip if daily limit reached
         if trades_today_count(state, instr) >= cfg["max_trades_per_day"]:
+            print(f"[AutoTrader] {instr}: SKIP — daily limit reached")
             log_activity(state, f"⏭️ {instr}: skip scan — daily limit reached", "SCAN")
             continue
 
         # Fetch OHLCV data
         df = _fetch_ohlcv(instr)
         if df is None:
+            print(f"[AutoTrader] {instr}: SKIP — no OHLCV data")
             log_activity(state, f"⚠️ {instr}: no OHLCV data, skipping", "SCAN")
             continue
 
@@ -944,6 +1000,10 @@ def _tick(state: dict) -> None:
             pb_dir   = best["direction"]
             # Score is 0-10; convert to 0-100 for confidence threshold comparison
             conf_pct = pb_score * 10
+            _cmet    = best.get("conditions_met", 0)
+            _ctot    = best.get("total_conditions", 1)
+            _qualifies = conf_pct >= cfg["min_confidence"] and _cmet >= 3
+            print(f"[AutoTrader] {instr}: conf={conf_pct:.0f}% checklist={_cmet}/{_ctot} → {'FIRE' if _qualifies else 'SKIP'} | {pb_name}")
             log_activity(
                 state,
                 f"🔍 {instr} scan | best={pb_name} | score={pb_score}/10 "
@@ -951,6 +1011,7 @@ def _tick(state: dict) -> None:
                 "SCAN",
             )
         else:
+            print(f"[AutoTrader] {instr}: no signals this cycle")
             log_activity(state, f"🔍 {instr}: no signals this cycle", "SCAN")
             continue
 
@@ -1012,6 +1073,10 @@ def run_loop(once: bool = False) -> None:
 
     try:
         while True:
+            state = load_state()          # reload so UI stop is detected
+            if not state.get("enabled", True):  # allow once-mode to bypass
+                log_activity(state, "🛑 Auto trader disabled — loop exiting", "SYSTEM")
+                break
             _tick(state)
             if once:
                 break
@@ -1019,6 +1084,7 @@ def run_loop(once: bool = False) -> None:
     except KeyboardInterrupt:
         log_activity(state, "🛑 Auto trader stopped by user", "SYSTEM")
     finally:
+        state = load_state()
         state["running"] = False
         save_state(state)
 

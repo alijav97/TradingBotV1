@@ -6870,18 +6870,26 @@ def main() -> None:
             _add_bot_msg(response)
 
 
-# ── Auto-restart auto trader on cloud boot ─────────────────────────────────
+# ── Auto-start auto trader background thread on every bot launch ─────────────
 try:
     from auto_trader import (
         start_auto_trader as _boot_start,
         load_state        as _boot_load_state,
+        is_running        as _at_is_running,
     )
     _boot_state = _boot_load_state()
-    if _boot_state.get("enabled", False) and not _boot_state.get("running", False):
+    # Always start if enabled OR if it was previously running and thread died
+    _was_enabled = _boot_state.get("enabled", False)
+    if _was_enabled and not _at_is_running():
         _boot_start()
-        print("[Bot] Auto trader restarted after redeploy")
-except Exception:
-    pass
+        print("[Bot] Auto trader background thread launched on startup")
+    elif not _at_is_running():
+        # First boot — start it automatically so trades fire without UI click
+        _boot_start()
+        print("[Bot] Auto trader auto-started on first boot")
+except Exception as _boot_err:
+    print(f"[Bot] Auto trader boot error: {_boot_err}")
+
 
 
 if __name__ == "__main__":
