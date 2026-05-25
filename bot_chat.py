@@ -658,7 +658,7 @@ def _load_df():
         st.session_state["is_live"]    = True
         # ── Upgrade to live price ─────────────────────────────────────────────
         try:
-            lp = _get_live_price()
+            lp = _get_live_price(st.session_state.get("instrument", "XAUUSD"))
             if lp.get("price") and lp["price"] > 0:
                 st.session_state["live_price"]  = round(lp["price"], 2)
                 st.session_state["live_source"] = lp.get("source", "—")
@@ -3586,12 +3586,14 @@ def _handle_price_check(msg=""):
         ticker = YF.get(instr, "GC=F")
         tk     = yf.Ticker(ticker)
         hist   = tk.history(
-            period="2d", interval="5m")
+            period="5d", interval="5m")
 
         if hist.empty:
+            # Hard fallback: try 1mo daily
+            hist = tk.history(period="1mo", interval="1d")
+        if hist.empty:
             st.warning(
-                f"⏳ {instr} — market closed "
-                f"or data unavailable")
+                f"⏳ {instr} — price data temporarily unavailable")
             return
 
         price  = float(hist["Close"].iloc[-1])
@@ -3939,7 +3941,7 @@ def _handle_open_interest(_msg: str) -> str:
 
 def _handle_sessions(_msg: str) -> str:
     board = get_full_session_board() if _WS_OK else "Session data unavailable — world_sessions module not loaded."
-    lp = _get_live_price()
+    lp = _get_live_price(st.session_state.get("instrument", "XAUUSD"))
     price_line = ""
     if lp.get("price") and lp["price"] > 0:
         warn = f"\n⚠️ {lp['stale_warning']}" if lp.get("stale_warning") else ""
@@ -4376,9 +4378,10 @@ def _handle_open_paper(_msg: str, direction: str) -> str:
     df = _load_df()
 
     # Always fetch fresh live price at moment of opening
+    _instr_pt = st.session_state.get("instrument", "XAUUSD")
     try:
         from mt5_sync import get_live_price as _glp_fresh
-        _live_fresh  = _glp_fresh()
+        _live_fresh  = _glp_fresh(_instr_pt)
         price        = _live_fresh["price"]
         price_source = _live_fresh["source"]
         # Update session state with fresh price too
@@ -4414,8 +4417,8 @@ def _handle_open_paper(_msg: str, direction: str) -> str:
             "confidence":   0,
         }
 
-    trade = _open_paper(signal, price, st.session_state.get("instrument", "XAUUSD"))
-    st.session_state["paper_open_count"] = _paper_summary(st.session_state.get("instrument", "XAUUSD")).get("open", 0)
+    trade = _open_paper(signal, price, _instr_pt)
+    st.session_state["paper_open_count"] = _paper_summary(_instr_pt).get("open", 0)
     return (
         f"## \U0001f4cb PAPER TRADE OPENED \u2705\n\n"
         f"ID:        **{trade['trade_id']}**\n"
@@ -5333,7 +5336,9 @@ def _render_home() -> None:
         }
         _instr  = st.session_state.get("instrument", "XAUUSD")
         _tk     = yf.Ticker(_YF_HOME.get(_instr, "GC=F"))
-        _hist   = _tk.history(period="1d", interval="5m")
+        _hist   = _tk.history(period="5d", interval="5m")
+        if _hist.empty:
+            _hist = _tk.history(period="1mo", interval="1d")
         if not _hist.empty:
             _hprice  = float(_hist["Close"].iloc[-1])
             _hchange = float(_hist["Close"].iloc[-1] - _hist["Close"].iloc[0])
@@ -6417,7 +6422,7 @@ def main() -> None:
             st.session_state["mt5_error"]     = str(_mt5_ex)
         # ── Live price refresh ────────────────────────────────────────────────
         try:
-            _lp_refresh = _get_live_price()
+            _lp_refresh = _get_live_price(st.session_state.get("instrument", "XAUUSD"))
             _new_price  = _lp_refresh.get("price") or 0
             if _new_price > 0:
                 _prev_price = st.session_state.get("live_price") or 0

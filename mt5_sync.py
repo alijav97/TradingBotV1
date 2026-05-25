@@ -840,10 +840,15 @@ def get_live_price(symbol: str = "XAUUSD") -> dict[str, Any]:
             pass
 
     # ── Priority 2: yfinance 1-minute bar (fallback if MT5 unavailable) ───────
+    _YF_SYMBOLS_P2: dict = {
+        "XAUUSD": "GC=F",  "NAS100": "NQ=F",    "US30":   "YM=F",
+        "GBPUSD": "GBPUSD=X", "EURUSD": "EURUSD=X", "WTI":  "CL=F",
+    }
     if _YF_OK and _yf is not None:
         try:
             import pandas as _pd_yf
-            ticker_obj = _yf.Ticker("GC=F")
+            _yf_sym    = _YF_SYMBOLS_P2.get(symbol, "GC=F")
+            ticker_obj = _yf.Ticker(_yf_sym)
             fast_df    = ticker_obj.history(interval="1m", period="1d",
                                             auto_adjust=True)
             if fast_df is not None and not fast_df.empty:
@@ -853,17 +858,21 @@ def get_live_price(symbol: str = "XAUUSD") -> dict[str, Any]:
                     _pd_yf.Timestamp.now(tz="UTC") -
                     last_time.tz_convert("UTC")
                 ).total_seconds())
-                if last_price > 0 and age_s < 300:
+                # Accept any price ≤ 48 h old; mark stale if > 5 min
+                _yf_live   = age_s < 300
+                _yf_warn   = "" if _yf_live else f"⚠ yfinance price {age_s//60}m old"
+                _yf_source = "yfinance_1m" if _yf_live else "yfinance_stale"
+                if last_price > 0 and age_s < 172800:   # 48 hours max
                     return {
                         "price":         round(last_price, 2),
                         "bid":           round(last_price - 0.15, 2),
                         "ask":           round(last_price + 0.15, 2),
                         "spread":        0.30,
-                        "source":        "yfinance_1m",
+                        "source":        _yf_source,
                         "timestamp_uae": _ts(),
                         "age_seconds":   age_s,
-                        "is_live":       True,
-                        "stale_warning": "",
+                        "is_live":       _yf_live,
+                        "stale_warning": _yf_warn,
                     }
         except Exception:
             pass
