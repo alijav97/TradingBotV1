@@ -428,6 +428,39 @@ INSTRUMENT_RISK_CONFIG: dict = {
     "EURUSD":  {"grade": "C", "priority": 6, "sl_pct": 0.2,  "tp_pct": 0.6,  "leverage": 10},
 }
 
+# Keyword → canonical instrument ID (used by analyze command router)
+_ANALYZE_ALIASES: dict[str, str] = {
+    # Gold
+    "gold":    "XAUUSD",
+    "xauusd":  "XAUUSD",
+    "xau":     "XAUUSD",
+    # Oil
+    "wti":     "WTI",
+    "oil":     "WTI",
+    "crude":   "WTI",
+    "spotcrude": "WTI",
+    # Nasdaq
+    "nas100":  "NAS100",
+    "nasdaq":  "NAS100",
+    "tech":    "NAS100",
+    "ndx":     "NAS100",
+    # Dow
+    "us30":    "US30",
+    "dow":     "US30",
+    "dji":     "US30",
+    "djia":    "US30",
+    # GBP
+    "gbpusd":  "GBPUSD",
+    "gbp":     "GBPUSD",
+    "cable":   "GBPUSD",
+    "pound":   "GBPUSD",
+    # EUR
+    "eurusd":  "EURUSD",
+    "eur":     "EURUSD",
+    "euro":    "EURUSD",
+    "fiber":   "EURUSD",
+}
+
 
 def _bootstrap_data_files() -> None:
     """
@@ -1847,6 +1880,42 @@ def _handle_setup(_msg: str) -> str:
     return out
 
 
+_INSTRUMENT_DISPLAY: dict[str, str] = {
+    "XAUUSD": "XAUUSD (Gold)",
+    "WTI":    "WTI (Crude Oil)",
+    "US30":   "US30 (Dow Jones)",
+    "NAS100": "NAS100 (Nasdaq)",
+    "GBPUSD": "GBPUSD (Cable)",
+    "EURUSD": "EURUSD (Euro)",
+}
+
+
+def _handle_analyze_instrument(instr: str, msg: str, account: float = 300.0) -> str:
+    """
+    Switch the active instrument to `instr`, then run the appropriate analysis.
+    Updates st.session_state["instrument"] so the sidebar dropdown reflects the change.
+    """
+    # Switch instrument
+    st.session_state["instrument"] = instr
+    display = _INSTRUMENT_DISPLAY.get(instr, instr)
+
+    # For XAUUSD delegate to the existing gold handler
+    if instr == "XAUUSD":
+        return _handle_gold(msg, account)
+
+    # For all other instruments: fetch live price then run signals handler
+    # which already reads st.session_state["instrument"]
+    _lp = _get_live_price(instr)
+    if _lp and _lp > 0:
+        st.session_state["live_price"] = _lp
+
+    # Route to the generic signals/market-read pipeline with the new instrument set
+    return (
+        f"### 📊 {display} Analysis\n\n"
+        f"*Switched to **{display}** — running full analysis…*\n\n"
+    ) + _handle_signals(msg, account)
+
+
 def _handle_gold(_msg: str, account: float = 300.0) -> str:
     lines = ["### 📊 XAUUSD Analysis\n"]
 
@@ -3242,7 +3311,12 @@ def _handle_help(_msg: str) -> str:
 #### 📊 Analysis
 | Command | What it does |
 |---|---|
-| `analyze gold` / `xauusd` | Full XAUUSD analysis with trade cards |
+| `analyze gold` / `analyze xauusd` | Full XAUUSD analysis with trade cards |
+| `analyze nas100` / `analyze nasdaq` | Full NAS100 analysis |
+| `analyze us30` / `analyze dow` | Full US30 analysis |
+| `analyze eurusd` / `analyze euro` | Full EURUSD analysis |
+| `analyze gbpusd` / `analyze cable` | Full GBPUSD analysis |
+| `analyze wti` / `analyze oil` | Full WTI Crude analysis |
 | `show signals` | All signals that passed checklist 4/5+ |
 | `market read` | Current market structure + bias summary |
 | `indicators` | Full 14-indicator technical scan |
@@ -3430,16 +3504,18 @@ def _handle_general(msg: str) -> str:
         wr   = bt.get("win_rate", "—")
         return f"**Found in database:** {name} (Tier {tier})\n\n{desc}\n\nBacktest win rate: {wr}"
 
+    _cur_instr   = st.session_state.get("instrument", "XAUUSD")
+    _cur_display = _INSTRUMENT_DISPLAY.get(_cur_instr, _cur_instr)
     return (
-        "I'm **TradingBotV1**, specialised in XAUUSD (Gold) analysis.\n\n"
+        f"I'm **TradingBotV1**, specialised in **{_cur_display}** analysis.\n\n"
         "Quick commands:\n"
+        f"- `analyze {_cur_instr.lower()}` — current {_cur_display} setups\n"
         "- `run setup` — load all data\n"
-        "- `analyze gold` — current XAUUSD setups\n"
         "- `show signals` — all trade signals\n"
         "- `risk guide` — position sizing\n"
         "- `news today` — economic calendar\n"
         "- `help` — full command list\n\n"
-        "Or ask me about EMA, RSI, SMC, confluence, sessions, or any playbook."
+        "Or ask about EMA, RSI, SMC, confluence, sessions, or any playbook."
     )
 
 
@@ -5032,6 +5108,19 @@ def _route(msg: str, account: float = 1000.0) -> str:
     if any(k in lower for k in ["market read", "read market", "what do you see",
                                    "trader view", "read chart"]):
         return _handle_market_read(msg)
+    # ── analyze <instrument> — switch instrument then analyze ────────────────
+    _analyze_instr: str | None = None
+    if lower.startswith("analyze "):
+        _keyword = lower[len("analyze "):].strip().split()[0] if lower[len("analyze "):].strip() else ""
+        _analyze_instr = _ANALYZE_ALIASES.get(_keyword)
+    if _analyze_instr is None:
+        # Also match bare instrument names / aliases used without "analyze" prefix
+        # but only when the whole message is just the keyword
+        _bare = lower.strip().split()[0]
+        if lower.strip() in _ANALYZE_ALIASES or (lower.startswith("analyze") and _bare == "analyze"):
+            _analyze_instr = _ANALYZE_ALIASES.get(lower.strip())
+    if _analyze_instr is not None:
+        return _handle_analyze_instrument(_analyze_instr, msg, account)
     if any(k in lower for k in ["gold", "xauusd", "analyze gold", "xau", "gold setup", "dig into gold"]):
         return _handle_gold(msg, account)
     if any(k in lower for k in ["ml suggest", "ml suggestion", "should i trade", "trade now?"]):
@@ -5493,6 +5582,11 @@ def _render_home() -> None:
 | Command | What it does |
 |---|---|
 | `analyze gold` | Full XAUUSD analysis |
+| `analyze nas100` | Full NAS100 analysis |
+| `analyze us30` | Full US30 analysis |
+| `analyze eurusd` | Full EURUSD analysis |
+| `analyze gbpusd` | Full GBPUSD analysis |
+| `analyze wti` | Full WTI Crude analysis |
 | `show signals` | All passing signals |
 | `market read` | Plain English market view |
 | `key levels` | Support & resistance |
