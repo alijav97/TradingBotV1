@@ -1,0 +1,248 @@
+"""
+scheduler/scheduler.py — APScheduler setup for TradingBotV2.
+
+Registers all recurring jobs:
+  - Every 60s  : monitor open paper trades (SL/TP check)
+  - Every 1H   : signal scan all 6 instruments (H1 timeframe)
+  - Every 4H   : signal scan all 6 instruments (H4 timeframe)
+  - Daily 06:00 GST : morning briefing + load economic calendar
+  - Daily 23:00 GST : ML retrain (if enough new trades)
+
+Usage:
+    from v2.scheduler.scheduler import BotScheduler
+    scheduler = BotScheduler(paper_trader, confluence_engine, journal, feed)
+    scheduler.start()
+    # ... runs forever, scheduler handles all jobs in background
+    scheduler.stop()
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from v2.trading.paper_trader import PaperTrader
+    from v2.signals.confluence_engine import ConfluenceEngine
+    from v2.journal.sqlite_journal import Journal
+    from v2.connectors.unified_data import DataFeed
+
+from v2.instrument_config import ALL_SYMBOLS
+from v2.signals.entry_checklist import validate_entry
+from v2.risk.loss_limits import LossLimits
+
+logger = logging.getLogger(__name__)
+
+GST = timezone(timedelta(hours=4))
+
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
+    _APScheduler_OK = True
+except ImportError:
+    _APScheduler_OK = False
+    logger.error("APScheduler not installed — scheduler disabled")
+
+
+class BotScheduler:
+    """
+    Manages all recurring bot jobs.
+    Inject dependencies — no global state.
+    """
+
+    def __init__(
+        self,
+        paper_trader: "PaperTrader",
+        confluence:   "ConfluenceEngine",
+        journal:      "Journal",
+        feed:         "DataFeed",
+    ) -> None:
+        self._pt        = paper_trader
+        self._ce        = confluence
+        self._journal   = journal
+        self._feed      = feed
+        self._limits    = LossLimits(journal)
+        self._scheduler = BackgroundScheduler(timezone="UTC") if _APScheduler_OK else None
+
+    def start(self) -> None:
+        """Register all jobs and start the scheduler."""
+        if self._scheduler is None:
+            logger.error("Cannot start — APScheduler not available")
+            return
+
+        # Trade monitor — every 60 seconds
+        self._scheduler.add_job(
+            func     = self._job_monitor_trades,
+            trigger  = IntervalTrigger(seconds=60),
+            id       = "monitor_trades",
+            name     = "Monitor open paper trades",
+            max_instances = 1,
+            misfire_grace_time = 30,
+        )
+
+        # H1 signal scan — every hour at :00
+        self._scheduler.add_job(
+            func     = lambda: self._job_scan("H1"),
+            trigger  = CronTrigger(minute=0),
+            id       = "scan_h1",
+            name     = "H1 signal scan",
+            max_instances = 1,
+            misfire_grace_time = 120,
+        )
+
+        # H4 signal scan — every 4 hours at :00
+        self._scheduler.add_job(
+            func     = lambda: self._job_scan("H4"),
+            trigger  = CronTrigger(hour="0,4,8,12,16,20", minute=5),
+            id       = "scan_h4",
+            name     = "H4 signal scan",
+            max_instances = 1,
+            misfire_grace_time = 120,
+        )
+
+        # Morning briefing — 06:00 GST = 02:00 UTC
+        self._scheduler.add_job(
+            func     = self._job_morning_briefing,
+            trigger  = CronTrigger(hour=2, minute=0, timezone="UTC"),
+            id       = "morning_briefing",
+            name     = "Daily morning briefing",
+        )
+
+        # Nightly ML retrain — 23:00 GST = 19:00 UTC
+        self._scheduler.add_job(
+            func     = self._job_retrain,
+            trigger  = CronTrigger(hour=19, minute=0, timezone="UTC"),
+            id       = "ml_retrain",
+            name     = "Nightly ML retrain",
+        )
+
+        self._scheduler.start()
+        logger.info("BotScheduler started — %d jobs registered", len(self._scheduler.get_jobs()))
+
+    def stop(self) -> None:
+        if self._scheduler and self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+            logger.info("BotScheduler stopped")
+
+    # ── Job implementations ───────────────────────────────────────────────────
+
+    def _job_monitor_trades(self) -> None:
+        """Check all open paper trades for SL/TP/max-hold."""
+        try:
+            actions = self._pt.check_all_open_trades()
+            if actions:
+                for a in actions:
+                    logger.info("Trade action: %s %s @ %.5f",
+                                a["trade_id"][:8], a["action"], a["price"])
+                    self._send_alert(a)
+        except Exception as exc:
+            logger.error("Monitor job error: %s", exc)
+
+    def _job_scan(self, timeframe: str) -> None:
+        """Run confluence scan on all instruments for a given timeframe."""
+        logger.info("Signal scan starting: %s", timeframe)
+
+        # Pre-checks
+        allowed, reason = self._limits.can_trade()
+        if not allowed:
+            logger.info("Scan aborted: %s", reason)
+            return
+
+        for symbol in ALL_SYMBOLS:
+            for direction in ("long", "short"):
+                try:
+                    self._scan_one(symbol, direction, timeframe)
+                except Exception as exc:
+                    logger.error("Scan error %s %s %s: %s", symbol, direction, timeframe, exc)
+
+    def _scan_one(self, symbol: str, direction: str, timeframe: str) -> None:
+        """Scan one instrument/direction/timeframe combination."""
+        df = self._feed.get_ohlcv(symbol, timeframe, 300)
+        if df.empty or len(df) < 50:
+            return
+
+        df_h4 = self._feed.get_ohlcv(symbol, "H4", 200) if timeframe == "H1" else None
+        df_d1 = self._feed.get_ohlcv(symbol, "D1", 100)
+
+        result = self._ce.score(symbol, direction, df, df_h4, df_d1)
+
+        if not result.get("signal"):
+            return
+
+        logger.info(
+            "SIGNAL %s %s score=%.1f strategy=%s",
+            symbol, direction, result["score"], result.get("strategy", "")
+        )
+
+        # Run entry checklist
+        signal = {
+            "symbol":           symbol,
+            "direction":        direction,
+            "entry_price":      result.get("entry_price"),
+            "stop_loss":        result.get("stop_loss"),
+            "score":            result.get("score"),
+            "confluence_score": result.get("score"),
+            "strategy":         result.get("strategy", ""),
+            "timeframe":        timeframe,
+        }
+
+        checklist = validate_entry(signal, df)
+        self._journal.log_signal(signal, taken=False, skip_reason="")
+
+        if not checklist["passed"]:
+            logger.info("Signal rejected at checklist: %s", checklist["failed_at"])
+            self._journal.log_signal(signal, taken=False, skip_reason=checklist["failed_at"])
+            return
+
+        # Open paper trade
+        trade_id = self._pt.open_trade(signal)
+        if trade_id:
+            self._journal.log_signal(signal, taken=True)
+            self._send_trade_alert(signal, trade_id)
+
+    def _job_morning_briefing(self) -> None:
+        """Log morning briefing stats."""
+        try:
+            from v2.intelligence.news_filter import get_calendar_summary
+            cal = get_calendar_summary()
+            stats = self._journal.get_stats(days=7)
+            logger.info(
+                "Morning briefing: %d events today | 7d WR=%.1f%% PnL=$%.2f",
+                cal["count"], stats.get("win_rate", 0), stats.get("total_pnl", 0)
+            )
+            if cal["warnings"]:
+                for w in cal["warnings"]:
+                    logger.warning("Calendar warning: %s", w)
+        except Exception as exc:
+            logger.error("Morning briefing error: %s", exc)
+
+    def _job_retrain(self) -> None:
+        """Trigger ML retrain if enough new trades available."""
+        try:
+            from v2.settings import ML_MIN_TRADES_TO_TRAIN
+            data = self._journal.get_ml_training_data()
+            if len(data) >= ML_MIN_TRADES_TO_TRAIN:
+                logger.info("ML retrain: %d samples available — triggering", len(data))
+                # ML trainer will be wired here in Week 2
+            else:
+                logger.info("ML retrain skipped: %d/%d samples", len(data), ML_MIN_TRADES_TO_TRAIN)
+        except Exception as exc:
+            logger.error("Retrain job error: %s", exc)
+
+    # ── Alert helpers ─────────────────────────────────────────────────────────
+
+    def _send_alert(self, action: dict) -> None:
+        """Send trade action alert (Telegram wired in Week 2)."""
+        pass
+
+    def _send_trade_alert(self, signal: dict, trade_id: str) -> None:
+        """Send new trade opened alert (Telegram wired in Week 2)."""
+        logger.info(
+            "TRADE OPENED [%s]: %s %s @ %.5f score=%.1f",
+            trade_id[:8],
+            signal["symbol"],
+            signal["direction"].upper(),
+            signal.get("entry_price", 0),
+            signal.get("score", 0),
+        )

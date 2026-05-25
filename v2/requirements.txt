@@ -1,0 +1,40 @@
+# TradingBotV2 requirements
+# Install: pip install -r requirements.txt
+# TA-Lib also needs C library: apt-get install libta-lib-dev (Linux)
+#                               or install TA-Lib-precompiled wheel (Windows)
+
+# ── Core data / analysis ──────────────────────────────────────────────────────
+pandas>=2.0.0
+numpy>=1.24.0
+TA-Lib>=0.4.28            # candlestick patterns — needs C library installed first
+yfinance>=0.2.40          # market context (DXY, VIX, US10Y) + fallback price data
+
+# ── Broker connectors ─────────────────────────────────────────────────────────
+MetaTrader5>=5.0.45       # Windows only — stub mode on Linux/Mac
+python-binance>=1.0.19    # Binance Futures
+
+# ── ML ────────────────────────────────────────────────────────────────────────
+scikit-learn>=1.4.0
+lightgbm>=4.3.0
+# hmmlearn>=0.3.2         # optional: HMM regime detection (install separately)
+
+# ── NLP / sentiment ───────────────────────────────────────────────────────────
+transformers>=4.40.0      # FinBERT model
+torch>=2.2.0              # FinBERT inference backend
+
+# ── API / web ─────────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9   # FastAPI file uploads
+httpx>=0.27.0             # async HTTP client
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+APScheduler>=3.10.4
+
+# ── Telegram ─────────────────────────────────────────────────────────────────
+python-telegram-bot>=21.3
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+requests>=2.31.0
+python-dotenv>=1.0.1
+pytz>=2024.1
