@@ -8,7 +8,7 @@
 $ErrorActionPreference = "Stop"
 
 # ── Config ────────────────────────────────────────────────────────────────────
-$GITHUB_REPO  = "https://github.com/YOUR_GITHUB_USERNAME/TradingBotV1.git"
+$GITHUB_REPO  = "https://github.com/alijav97/TradingBotV1.git"
 $INSTALL_DIR  = "C:\TradingBotV1"
 $BOT_SCRIPT   = "C:\start_bot.ps1"
 $TASK_NAME    = "TradingBotV1"
