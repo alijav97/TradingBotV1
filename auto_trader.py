@@ -436,6 +436,17 @@ def open_trade(
     Returns the trade dict, or None if blocked.
     """
     cfg       = INSTRUMENTS[instr]
+
+    # ── ONE TRADE AT A TIME PER INSTRUMENT ──────────────────────────────────
+    _all_trades = load_trades(instr)
+    if any(t.get("status") == "OPEN" for t in _all_trades):
+        log_activity(state,
+                     f"{instr}: trade already open, waiting for close",
+                     "BLOCKED")
+        return None
+    # ───────────────────────────────────────────────────────────────────────
+
+    # ── Daily COMPLETED trade limit (counts closed trades, not opens) ──────────
     trade_num = trades_today_count(state, instr) + 1
 
     if trade_num > cfg["max_trades_per_day"]:
@@ -497,8 +508,8 @@ def open_trade(
     trades.append(trade)
     save_trades(instr, trades)
 
-    # Track daily count
-    increment_trades_today(state, instr)
+    # Note: increment_trades_today is called when this trade CLOSES (in close_trade)
+    # so max_trades_per_day counts completed trades, not simultaneous opens.
 
     # Add to open-trades watch list
     state.setdefault("open_trades", []).append({
@@ -516,7 +527,7 @@ def open_trade(
     # ── CHANGE 3 log with account impact ────────────────────────────────────
     log_activity(
         state,
-        f"✅ OPENED Trade {trade_num}/2 | "
+        f"✅ OPENED | "
         f"{direction.upper()} {instr} @ {price} | "
         f"SL:{sl} (-{account_risk_pct}% acc) | "
         f"TP:{tp} (+{account_profit_pct}% acc) | "
@@ -566,6 +577,8 @@ def close_trade(
                     f"{outcome} | P&L: {t['pnl_pct']:+.2f}% on trade",
                     "TRADE",
                 )
+                # Count this completed trade toward the daily limit
+                increment_trades_today(state, instr)
                 break
         if updated:
             save_trades(instr, trades)

@@ -40,6 +40,14 @@ def _save_trades(trades: list, instrument: str = "XAUUSD") -> None:
 def open_paper_trade(signal: dict, current_price: float,
                      instrument: str = "XAUUSD") -> dict:
     """Open a new paper trade from a signal dict + current price."""
+    # ── ONE TRADE AT A TIME PER INSTRUMENT ──────────────────────────────────
+    _existing = _load_trades(instrument)
+    _open_trades = [t for t in _existing if t.get("status") == "OPEN"]
+    if _open_trades:
+        _msg = f"{instrument}: trade already open, waiting for close"
+        print(f"[paper_trader] {_msg}")
+        return {"blocked": True, "reason": _msg, "instrument": instrument}
+    # ────────────────────────────────────────────────────────────────────────
     direction = signal.get("direction", "short")
     _sl_default = (current_price + 30) if direction == "short" else (current_price - 30)
     _tp_default = (current_price - 60) if direction == "short" else (current_price + 60)
