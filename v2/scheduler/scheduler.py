@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 from v2.instrument_config import ALL_SYMBOLS
 from v2.signals.entry_checklist import validate_entry
 from v2.risk.loss_limits import LossLimits
+from v2.api.telegram_bot import TelegramAlerter
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class BotScheduler:
         self._feed      = feed
         self._limits    = LossLimits(journal)
         self._scheduler = BackgroundScheduler(timezone="UTC") if _APScheduler_OK else None
+        self._alerter   = TelegramAlerter()
 
     def start(self) -> None:
         """Register all jobs and start the scheduler."""
@@ -202,10 +204,10 @@ class BotScheduler:
             self._send_trade_alert(signal, trade_id)
 
     def _job_morning_briefing(self) -> None:
-        """Log morning briefing stats."""
+        """Log morning briefing stats and send Telegram alert."""
         try:
             from v2.intelligence.news_filter import get_calendar_summary
-            cal = get_calendar_summary()
+            cal   = get_calendar_summary()
             stats = self._journal.get_stats(days=7)
             logger.info(
                 "Morning briefing: %d events today | 7d WR=%.1f%% PnL=$%.2f",
@@ -214,6 +216,7 @@ class BotScheduler:
             if cal["warnings"]:
                 for w in cal["warnings"]:
                     logger.warning("Calendar warning: %s", w)
+            self._alerter.send_morning_briefing(stats, cal)
         except Exception as exc:
             logger.error("Morning briefing error: %s", exc)
 
@@ -233,11 +236,27 @@ class BotScheduler:
     # ── Alert helpers ─────────────────────────────────────────────────────────
 
     def _send_alert(self, action: dict) -> None:
-        """Send trade action alert (Telegram wired in Week 2)."""
-        pass
+        """Send a trade-action alert (SL/TP hit, BE move, etc.) via Telegram."""
+        action_type = action.get("action", "")
+        trade_id    = action.get("trade_id", "")
+
+        if action_type in ("SL", "TP1", "TP2", "MANUAL", "MAX_HOLD"):
+            # Fetch full trade record from journal for rich formatting
+            trade = self._journal.get_trade(trade_id)
+            if trade:
+                self._alerter.send_trade_closed(trade)
+                return
+
+        # Fallback: raw text for any other action type
+        self._alerter.send_text(
+            f"⚙️ TRADE ACTION\n"
+            f"ID: {trade_id[:8]}\n"
+            f"Action: {action_type}\n"
+            f"Price: {action.get('price', '?')}"
+        )
 
     def _send_trade_alert(self, signal: dict, trade_id: str) -> None:
-        """Send new trade opened alert (Telegram wired in Week 2)."""
+        """Send new-trade-opened alert via Telegram."""
         logger.info(
             "TRADE OPENED [%s]: %s %s @ %.5f score=%.1f",
             trade_id[:8],
@@ -246,3 +265,10 @@ class BotScheduler:
             signal.get("entry_price", 0),
             signal.get("score", 0),
         )
+        # Enrich signal with trade_id so the message can reference it
+        trade = self._journal.get_trade(trade_id)
+        if trade:
+            self._alerter.send_trade_opened(trade)
+        else:
+            # Fallback if trade row not yet readable
+            self._alerter.send_signal(signal)

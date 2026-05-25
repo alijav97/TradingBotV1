@@ -1,0 +1,42 @@
+# Version control
+.git
+.gitignore
+
+# Python bytecode
+__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Data and databases — mounted as a volume at runtime
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Virtual environments
+.venv
+venv
+env
+
+# Test artefacts
+.pytest_cache
+.coverage
+htmlcov/
+*.egg-info
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Secrets — never bake into the image
+.env
+*.env
+secrets/

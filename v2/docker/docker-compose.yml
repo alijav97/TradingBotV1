@@ -1,0 +1,50 @@
+version: "3.9"
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
+services:
+
+  tradingbot:
+    build:
+      context: ../..          # repo root — gives Docker access to the v2/ directory
+      dockerfile: v2/docker/Dockerfile
+
+    image: tradingbotv2:latest
+
+    container_name: tradingbotv2
+
+    ports:
+      - "8000:8000"           # FastAPI  →  host:8000
+
+    # Load all runtime secrets and config from .env (never commit .env).
+    # See .env.example for the full list of required variables.
+    env_file:
+      - .env
+
+    environment:
+      # Explicit overrides — these take precedence over .env values.
+      # Set DATA_DIR so the journal and logs land in the mounted volume.
+      DATA_DIR: /app/data
+
+    volumes:
+      # Persist the SQLite journal, logs, and ML model files across restarts.
+      # The host path is relative to the docker-compose.yml file location.
+      - ./data:/app/data
+
+    restart: unless-stopped
+
+    # Give the container enough time to initialise connections before
+    # the health-check starts failing.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    # Logging — rotate so the VPS disk doesn't fill up.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
