@@ -150,6 +150,8 @@ def load_training_data() -> pd.DataFrame:
             "d1_trend":             c.get("d1_trend", c.get("d1_bias", "unknown")),
             "counter_trend":        1 if c.get("counter_trend", c.get("is_counter_trend", False)) else 0,
             "rsi_zone":             c.get("rsi_zone", "neutral"),
+            "duration_minutes":     int(t.get("duration_minutes",
+                                        _parse_time_held(t.get("time_held", "0m")))),
         })
 
     return pd.DataFrame(rows)
@@ -194,6 +196,27 @@ def train_pattern_model(df: pd.DataFrame) -> dict:
                 "avg_pnl":  round(float(subset["pnl_pips"].mean()), 1),
             }
     model["strategy_win_rates"] = strategy_wr
+
+    # Yield-per-hour per strategy (pip gain per hour of hold time for winners)
+    strategy_yield: dict = {}
+    if "duration_minutes" in df.columns:
+        for strat in df["strategy"].unique():
+            subset = df[df["strategy"] == strat]
+            if len(subset) >= 2:
+                wins_s   = subset[subset["outcome"] == 1]
+                losses_s = subset[subset["outcome"] == 0]
+                avg_win_dur  = float(wins_s["duration_minutes"].mean())   if len(wins_s)   > 0 else 60.0
+                avg_loss_dur = float(losses_s["duration_minutes"].mean()) if len(losses_s) > 0 else 60.0
+                avg_win_pips = float(wins_s["pnl_pips"].mean())           if len(wins_s)   > 0 else 0.0
+                yph = round(avg_win_pips / max(avg_win_dur / 60.0, 0.1), 2)
+                strategy_yield[strat] = {
+                    "yield_per_hour":    yph,
+                    "avg_win_duration":  round(avg_win_dur, 1),
+                    "avg_loss_duration": round(avg_loss_dur, 1),
+                    "avg_win_pips":      round(avg_win_pips, 1),
+                    "total":             int(len(subset)),
+                }
+    model["strategy_yield_scores"] = strategy_yield
 
     # Win rate by regime
     regime_wr: dict = {}
@@ -782,7 +805,60 @@ class MLEngine:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FUNCTION 5: run_ml_training
+# FUNCTION 5: get_best_yield_strategies
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_best_yield_strategies(top_n: int = 3) -> str:
+    """
+    Load trained model and return the top strategies ranked by yield_per_hour.
+    Returns a formatted markdown string for display in bot_chat.
+    """
+    try:
+        with open(ML_MODEL_FILE, encoding="utf-8") as f:
+            model = json.load(f)
+    except Exception:
+        return "⚠️ No ML model trained yet. Run `train ml` first."
+
+    yield_scores = model.get("strategy_yield_scores", {})
+    win_rates    = model.get("strategy_win_rates", {})
+
+    if not yield_scores:
+        return (
+            "⚠️ No yield data yet — need closed paper trades with `duration_minutes`.\n"
+            "Fire more paper trades and run `train ml` to populate yield scores."
+        )
+
+    # Sort by yield_per_hour descending, require at least 2 trades
+    ranked = sorted(
+        [(s, d) for s, d in yield_scores.items() if d.get("total", 0) >= 2],
+        key=lambda x: x[1].get("yield_per_hour", 0),
+        reverse=True,
+    )[:top_n]
+
+    if not ranked:
+        return "⚠️ Not enough trades per strategy yet (need ≥2 per strategy)."
+
+    lines = ["### 🏆 Best Yield Strategies (pips/hour)\n"]
+    for i, (strat, d) in enumerate(ranked, 1):
+        wr_data = win_rates.get(strat, {})
+        wr      = wr_data.get("win_rate", 0)
+        lines.append(
+            f"**{i}. {strat}**\n"
+            f"  • Yield: **{d['yield_per_hour']} pips/hr**\n"
+            f"  • Win rate: {wr}% ({d['total']} trades)\n"
+            f"  • Avg win pips: +{d['avg_win_pips']} | Avg win time: {d['avg_win_duration']:.0f}m\n"
+            f"  • Avg loss time: {d['avg_loss_duration']:.0f}m\n"
+        )
+
+    lines.append(
+        "\n💡 *Yield = average win pips ÷ average hold time. "
+        "Higher = faster capital rotation.*"
+    )
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FUNCTION 6: run_ml_training
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_ml_training() -> str:

@@ -228,6 +228,7 @@ try:
         run_ml_training        as _run_ml,
         generate_ml_insights   as _ml_insights,
         get_ml_confidence_adjustment as _ml_adj,
+        get_best_yield_strategies as _best_yield,
         MLEngine               as _MLEngine,
     )
     _ML_OK     = True
@@ -238,6 +239,7 @@ except Exception:
     def _run_ml():       return "ML engine not available."   # type: ignore[misc]
     def _ml_insights():  return {"available": False}          # type: ignore[misc]
     def _ml_adj(**kw):   return {"adjustment": 0.0, "available": False}  # type: ignore[misc]
+    def _best_yield(**kw): return "ML engine not available."  # type: ignore[misc]
 
 try:
     from macro_scorer    import MacroScorer as _MacroScorer
@@ -3260,6 +3262,7 @@ def _handle_help(_msg: str) -> str:
 |---|---|
 | `ml suggest` | ML quality assessment for next trade |
 | `best signal` | ML best setup picker |
+| `best yield` | Top strategies ranked by pips/hour |
 | `ml insights` / `why analysis` | ML pattern learning report |
 | `train ml` | Retrain ML on paper trade history |
 
@@ -5033,6 +5036,8 @@ def _route(msg: str, account: float = 1000.0) -> str:
         return _handle_gold(msg, account)
     if any(k in lower for k in ["ml suggest", "ml suggestion", "should i trade", "trade now?"]):
         return _handle_ml_suggest(msg, account)
+    if any(k in lower for k in ["best yield", "yield strategy", "fastest strategy", "yield per hour", "top yield"]):
+        return _best_yield()
     if any(k in lower for k in ["best signal", "best setup", "top signal", "ml pick", "ml best"]):
         return _handle_best_signal(msg, account)
     if any(k in lower for k in ["signals", "show signals", "what's the trade", "any setups", "trade setup"]):

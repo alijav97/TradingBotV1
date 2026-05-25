@@ -237,15 +237,21 @@ def update_paper_trades(current_price: float,
             except Exception:
                 time_held = "unknown"
             sl_pips = -round(abs(entry - sl) / 0.1, 1)
+            try:
+                _dur_mins = int(_dur.total_seconds() // 60)
+            except Exception:
+                _dur_mins = 0
             trade.update({
-                "status":       "CLOSED",
-                "outcome":      "LOSS",
-                "close_price":  round(sl, 2),
-                "closed_at":    datetime.now(GST).strftime("%I:%M %p UAE | %a %d %b %Y"),
-                "time_held":    time_held,
-                "pnl_pips":     sl_pips,
-                "pnl_usd":      round(sl_pips * 0.1, 2),
-                "close_reason": "SL_HIT",
+                "status":           "CLOSED",
+                "outcome":          "LOSS",
+                "outcome_detail":   "SL",
+                "close_price":      round(sl, 2),
+                "closed_at":        datetime.now(GST).strftime("%I:%M %p UAE | %a %d %b %Y"),
+                "time_held":        time_held,
+                "duration_minutes": _dur_mins,
+                "pnl_pips":         sl_pips,
+                "pnl_usd":          round(sl_pips * 0.1, 2),
+                "close_reason":     "SL_HIT",
                 "close_detail": (
                     f"SL hit at ${sl:,.2f} | "
                     f"Held for {time_held} | "
@@ -276,15 +282,21 @@ def update_paper_trades(current_price: float,
             except Exception:
                 time_held = "unknown"
             tp_pips = round(abs(tp1 - entry) / 0.1, 1)
+            try:
+                _dur_mins = int(_dur.total_seconds() // 60)
+            except Exception:
+                _dur_mins = 0
             trade.update({
-                "status":       "CLOSED",
-                "outcome":      "WIN",
-                "close_price":  round(tp1, 2),
-                "closed_at":    datetime.now(GST).strftime("%I:%M %p UAE | %a %d %b %Y"),
-                "time_held":    time_held,
-                "pnl_pips":     tp_pips,
-                "pnl_usd":      round(tp_pips * 0.1, 2),
-                "close_reason": "TP_HIT",
+                "status":           "CLOSED",
+                "outcome":          "WIN",
+                "outcome_detail":   "TP1",
+                "close_price":      round(tp1, 2),
+                "closed_at":        datetime.now(GST).strftime("%I:%M %p UAE | %a %d %b %Y"),
+                "time_held":        time_held,
+                "duration_minutes": _dur_mins,
+                "pnl_pips":         tp_pips,
+                "pnl_usd":          round(tp_pips * 0.1, 2),
+                "close_reason":     "TP_HIT",
                 "close_detail": (
                     f"TP hit at ${tp1:,.2f} | "
                     f"Held for {time_held} | "
