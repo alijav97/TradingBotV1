@@ -138,10 +138,18 @@ class LGBMTrainer:
             random_state=42,
             verbose=-1,
         )
+        callbacks = []
+        try:
+            from lightgbm import early_stopping as _lgbm_es
+            callbacks.append(_lgbm_es(stopping_rounds=20, verbose=False))
+        except ImportError:
+            pass
+
         model.fit(
             X_train, y_train,
             feature_name=feature_names,
             eval_set=[(X_val, y_val)],
+            callbacks=callbacks or None,
         )
 
         # Validation accuracy

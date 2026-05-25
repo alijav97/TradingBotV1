@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
 from v2.instrument_config import get_instrument, price_to_pips
 from v2.risk.position_sizer import calculate_lot_size, calculate_tp_prices, calculate_risk_usd
-from v2.risk.trade_manager import get_trailing_sl
 from v2.risk.portfolio_heat import PortfolioHeat
 
 logger = logging.getLogger(__name__)
@@ -101,6 +100,7 @@ class PaperTrader:
             "session":          signal.get("session", ""),
             "regime":           signal.get("regime", ""),
             "news_score":       signal.get("news_score"),
+            "factors":          signal.get("factors", {}),   # per-factor breakdown for ML
             "raw_signal":       signal,
         }
 
@@ -141,7 +141,6 @@ class PaperTrader:
         tp2       = float(trade["tp2_price"] or 0)
         lot_size  = float(trade["lot_size"])
         tp1_hit   = bool(trade.get("tp1_hit", 0))
-        be_moved  = bool(trade.get("be_moved", 0))
         open_time = trade.get("open_time", "")
 
         # Get current price
@@ -152,49 +151,67 @@ class PaperTrader:
 
         is_long = direction.lower() in ("long", "buy")
 
-        # ── Max hold check ────────────────────────────────────────────────────
+        # ── Hold time ─────────────────────────────────────────────────────────
+        hold_minutes = 0.0
         if open_time:
             try:
                 opened_at = datetime.fromisoformat(open_time.replace("Z", "+00:00"))
-                hours_open = (datetime.now(timezone.utc) - opened_at).total_seconds() / 3600
-                if hours_open >= MAX_HOLD_HOURS:
-                    pnl = self._calc_pnl(symbol, entry, current_price, direction, lot_size)
-                    self._journal.close_trade(trade_id, current_price, "MAX_HOLD",
-                                              pnl_usd=pnl[0], pips=pnl[1])
-                    logger.info("Trade %s closed: MAX_HOLD (%.1fh)", trade_id[:8], hours_open)
-                    return {"trade_id": trade_id, "action": "MAX_HOLD", "price": current_price}
+                hold_minutes = (datetime.now(timezone.utc) - opened_at).total_seconds() / 60
             except Exception:
                 pass
 
-        # ── SL check ──────────────────────────────────────────────────────────
-        if is_long and current_price <= sl:
-            pnl = self._calc_pnl(symbol, entry, sl, direction, lot_size)
-            self._journal.close_trade(trade_id, sl, "SL", pnl_usd=pnl[0], pips=pnl[1])
-            logger.info("Trade %s closed: SL hit at %.5f", trade_id[:8], sl)
-            return {"trade_id": trade_id, "action": "SL", "price": sl}
+        # ── Fetch ATR for trailing SL ─────────────────────────────────────────
+        current_atr = self._get_current_atr(symbol)
 
-        if not is_long and current_price >= sl:
+        # ── Trailing SL after TP1 ─────────────────────────────────────────────
+        if tp1_hit and current_atr and current_atr > 0:
+            trail_dist = 1.5 * current_atr
+            if is_long:
+                trail_sl = current_price - trail_dist
+                if trail_sl > sl:  # only move up, never down
+                    self._journal.update_stop_loss(trade_id, trail_sl)
+                    sl = trail_sl
+            else:
+                trail_sl = current_price + trail_dist
+                if trail_sl < sl:  # only move down, never up
+                    self._journal.update_stop_loss(trade_id, trail_sl)
+                    sl = trail_sl
+
+        # ── Max hold check ────────────────────────────────────────────────────
+        if hold_minutes >= MAX_HOLD_HOURS * 60:
+            pnl = self._calc_pnl(symbol, entry, current_price, direction, lot_size)
+            ctx = self._build_exit_context(symbol, hold_minutes, current_atr)
+            self._journal.close_trade(trade_id, current_price, "MAX_HOLD",
+                                      pnl_usd=pnl[0], pips=pnl[1], exit_context=ctx)
+            logger.info("Trade %s closed: MAX_HOLD (%.0fh)", trade_id[:8], hold_minutes / 60)
+            return {"trade_id": trade_id, "action": "MAX_HOLD", "price": current_price}
+
+        # ── SL check ──────────────────────────────────────────────────────────
+        if (is_long and current_price <= sl) or (not is_long and current_price >= sl):
             pnl = self._calc_pnl(symbol, entry, sl, direction, lot_size)
-            self._journal.close_trade(trade_id, sl, "SL", pnl_usd=pnl[0], pips=pnl[1])
+            ctx = self._build_exit_context(symbol, hold_minutes, current_atr)
+            self._journal.close_trade(trade_id, sl, "SL",
+                                      pnl_usd=pnl[0], pips=pnl[1], exit_context=ctx)
             logger.info("Trade %s closed: SL hit at %.5f", trade_id[:8], sl)
             return {"trade_id": trade_id, "action": "SL", "price": sl}
 
         # ── TP1 check ─────────────────────────────────────────────────────────
-        if tp1 and not tp1_hit:
+        if tp1 > 0 and not tp1_hit:
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
                 self._journal.mark_tp1_hit(trade_id)
-                # Move SL to breakeven
-                self._update_sl(trade_id, entry)
+                self._journal.update_stop_loss(trade_id, entry)  # move SL to BE
                 self._journal.mark_breakeven(trade_id)
                 logger.info("Trade %s: TP1 hit at %.5f — SL moved to BE", trade_id[:8], tp1)
                 return {"trade_id": trade_id, "action": "TP1", "price": tp1}
 
         # ── TP2 check ─────────────────────────────────────────────────────────
-        if tp2 and tp1_hit:
+        if tp2 > 0 and tp1_hit:
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
                 pnl = self._calc_pnl(symbol, entry, tp2, direction, lot_size)
-                self._journal.close_trade(trade_id, tp2, "TP2", pnl_usd=pnl[0], pips=pnl[1],
-                                          rr_achieved=pnl[2])
+                ctx = self._build_exit_context(symbol, hold_minutes, current_atr)
+                self._journal.close_trade(trade_id, tp2, "TP2",
+                                          pnl_usd=pnl[0], pips=pnl[1], rr_achieved=pnl[2],
+                                          exit_context=ctx)
                 logger.info("Trade %s closed: TP2 at %.5f", trade_id[:8], tp2)
                 return {"trade_id": trade_id, "action": "TP2", "price": tp2}
 
@@ -223,15 +240,34 @@ class PaperTrader:
         except Exception:
             return 0.0, 0.0, 0.0
 
-    def _update_sl(self, trade_id: str, new_sl: float) -> None:
-        """Update SL in the database (for breakeven moves)."""
+    def _get_current_atr(self, symbol: str) -> float:
+        """Fetch the current ATR for a symbol (used for trailing SL). Returns 0 on failure."""
         try:
-            self._journal._conn.execute(
-                "UPDATE trades SET stop_loss=? WHERE id=?", (new_sl, trade_id)
+            df = self._feed.get_ohlcv(symbol, "H1", 20)
+            if df.empty or len(df) < 5:
+                return 0.0
+            high, low, close = df["high"], df["low"], df["close"]
+            tr = (high - low).combine(
+                (high - close.shift(1)).abs(), max
+            ).combine(
+                (low - close.shift(1)).abs(), max
             )
-            self._journal._conn.commit()
-        except Exception as exc:
-            logger.error("Failed to update SL for %s: %s", trade_id[:8], exc)
+            return float(tr.ewm(span=14, adjust=False).mean().iloc[-1])
+        except Exception:
+            return 0.0
+
+    def _build_exit_context(self, symbol: str, hold_minutes: float, atr: float) -> dict:
+        """Build exit-time context dict for ML enrichment."""
+        ctx: dict = {"hold_time_minutes": round(hold_minutes, 1), "exit_atr": round(atr, 5)}
+        try:
+            df = self._feed.get_ohlcv(symbol, "H1", 50)
+            if not df.empty:
+                from v2.analysis.indicators import get_adx
+                adx_result = get_adx(df)
+                ctx["exit_regime"] = adx_result.get("bias", "unknown")
+        except Exception:
+            pass
+        return ctx
 
     def get_open_summary(self) -> dict:
         """Return summary of all open paper trades."""

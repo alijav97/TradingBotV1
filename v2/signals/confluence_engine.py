@@ -26,7 +26,7 @@ from v2.analysis.candle_patterns import detect_patterns
 logger = logging.getLogger(__name__)
 
 # Minimum score to generate a tradeable signal
-MIN_SCORE = 3.0
+MIN_SCORE = 4.0
 
 
 class ConfluenceEngine:

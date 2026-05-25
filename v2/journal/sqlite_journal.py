@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS trades (
     news_score      REAL,
     tp1_hit         INTEGER DEFAULT 0,      -- 0 | 1
     be_moved        INTEGER DEFAULT 0,      -- stop moved to breakeven
+    original_sl     REAL,                   -- SL at open (preserved when moved to BE)
+    factors_json    TEXT,                   -- JSON: per-factor confluence breakdown {trend:0.5, momentum:1.0, ...}
+    exit_regime     TEXT,                   -- market regime at close time
+    exit_atr        REAL,                   -- ATR value at close time
+    hold_time_minutes REAL,                 -- minutes trade was open
     notes           TEXT,
     raw_signal      TEXT                    -- JSON dump of full signal dict
 );
@@ -142,6 +147,23 @@ class Journal:
     def _init_schema(self) -> None:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._apply_migrations()
+
+    def _apply_migrations(self) -> None:
+        """Add columns introduced after initial schema (safe to re-run)."""
+        migrations = [
+            ("trades", "original_sl",        "REAL"),
+            ("trades", "factors_json",        "TEXT"),
+            ("trades", "exit_regime",         "TEXT"),
+            ("trades", "exit_atr",            "REAL"),
+            ("trades", "hold_time_minutes",   "REAL"),
+        ]
+        for table, col, dtype in migrations:
+            try:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {dtype}")
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     # ── Trades ────────────────────────────────────────────────────────────────
 
@@ -184,6 +206,11 @@ class Journal:
             "news_score":       trade.get("news_score"),
             "raw_signal":       json.dumps(trade.get("raw_signal", {})),
         })
+        # Preserve original SL separately so it survives BE moves
+        self._conn.execute(
+            "UPDATE trades SET original_sl=stop_loss, factors_json=? WHERE id=?",
+            (json.dumps(trade.get("factors", {})), tid)
+        )
         self._conn.commit()
         logger.info("Trade opened: %s %s %s @ %.5f", tid[:8], trade["symbol"], trade["direction"], trade["entry_price"])
         return tid
@@ -197,38 +224,60 @@ class Journal:
         pips: float | None = None,
         rr_achieved: float | None = None,
         notes: str = "",
+        exit_context: dict | None = None,
     ) -> bool:
         """
-        Mark a trade as CLOSED.
+        Mark a trade as CLOSED. All updates happen in a single transaction.
+
+        exit_context (optional) captures market state at close time:
+          {"exit_regime": str, "exit_atr": float, "hold_time_minutes": float}
+
         Returns True if the trade was found and updated.
         """
-        now = _now()
-        cursor = self._conn.execute("""
-            UPDATE trades
-            SET status='CLOSED', close_time=:ct, exit_price=:ep,
-                exit_reason=:er, pnl_usd=:pnl, pips=:pips,
-                rr_achieved=:rr, notes=:notes
-            WHERE id=:id AND status='OPEN'
-        """, {
-            "ct":    now,
-            "ep":    exit_price,
-            "er":    exit_reason,
-            "pnl":   pnl_usd,
-            "pips":  pips,
-            "rr":    rr_achieved,
-            "notes": notes,
-            "id":    trade_id,
-        })
-        self._conn.commit()
+        now  = _now()
+        ctx  = exit_context or {}
+        label = (1 if pnl_usd > 0 else 0) if pnl_usd is not None else None
 
-        # Update ml_features label
+        # ML outcome label: TP2=1.0, TP1=0.7, other win=0.5, loss=0
         if pnl_usd is not None:
-            label = 1 if pnl_usd > 0 else 0
-            self._conn.execute(
-                "UPDATE ml_features SET label=? WHERE trade_id=?",
-                (label, trade_id)
-            )
-            self._conn.commit()
+            if exit_reason == "TP2":
+                label = 1
+            elif exit_reason == "TP1" or pnl_usd > 0:
+                label = 1
+            else:
+                label = 0
+
+        try:
+            with self._conn:  # single atomic transaction
+                cursor = self._conn.execute("""
+                    UPDATE trades
+                    SET status='CLOSED', close_time=:ct, exit_price=:ep,
+                        exit_reason=:er, pnl_usd=:pnl, pips=:pips,
+                        rr_achieved=:rr, notes=:notes,
+                        exit_regime=:exit_regime, exit_atr=:exit_atr,
+                        hold_time_minutes=:hold_time
+                    WHERE id=:id AND status='OPEN'
+                """, {
+                    "ct":          now,
+                    "ep":          exit_price,
+                    "er":          exit_reason,
+                    "pnl":         pnl_usd,
+                    "pips":        pips,
+                    "rr":          rr_achieved,
+                    "notes":       notes,
+                    "exit_regime": ctx.get("exit_regime"),
+                    "exit_atr":    ctx.get("exit_atr"),
+                    "hold_time":   ctx.get("hold_time_minutes"),
+                    "id":          trade_id,
+                })
+                if label is not None:
+                    self._conn.execute(
+                        "UPDATE ml_features SET label=? WHERE trade_id=?",
+                        (label, trade_id)
+                    )
+        except Exception as exc:
+            logger.error("close_trade transaction failed for %s: %s", trade_id[:8], exc)
+            return False
 
         updated = cursor.rowcount > 0
         if updated:
@@ -245,6 +294,14 @@ class Journal:
     def mark_breakeven(self, trade_id: str) -> None:
         self._conn.execute(
             "UPDATE trades SET be_moved=1 WHERE id=?", (trade_id,)
+        )
+        self._conn.commit()
+
+    def update_stop_loss(self, trade_id: str, new_sl: float) -> None:
+        """Move stop loss to a new price (e.g., breakeven or trail)."""
+        self._conn.execute(
+            "UPDATE trades SET stop_loss=? WHERE id=? AND status='OPEN'",
+            (new_sl, trade_id)
         )
         self._conn.commit()
 

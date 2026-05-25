@@ -149,10 +149,7 @@ def get_vwap(df: pd.DataFrame) -> dict:
     above    = price > vv
     dist_pct = round(abs(price - vv) / vv * 100, 3) if vv else 0.0
 
-    if   above and dist_pct > 0.5:      bias = "bearish"
-    elif above:                          bias = "bullish"
-    elif not above and dist_pct > 0.5:   bias = "bullish"
-    else:                                bias = "bearish"
+    bias = "bullish" if above else "bearish"
 
     return {"vwap": round(vv,2), "price": round(price,2), "above": above,
             "distance": round(price - vv, 2), "dist_pct": dist_pct, "bias": bias}

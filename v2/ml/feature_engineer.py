@@ -125,6 +125,8 @@ class FeatureEngineer:
             features.update(self._price_action_features(df))
             features.update(self._context_features(trade))
             features.update(self._historical_features(trade))
+            features.update(self._factor_features(trade))    # per-factor confluence breakdown
+            features.update(self._exit_features(trade))      # market state at close
         except Exception as exc:  # broad catch only at the outermost level
             logger.error("feature extraction failed for trade %s: %s",
                          trade.get("id", "?")[:8], exc, exc_info=True)
@@ -360,22 +362,84 @@ class FeatureEngineer:
         exclude_id: str,
         limit: int,
     ) -> float:
-        """Query journal for the last ``limit`` closed trades and return win rate."""
+        """
+        Return win rate of the last ``limit`` closed trades for this symbol,
+        using only trades that were opened BEFORE the trade being evaluated.
+        This prevents data leakage where future trades would inform past labels.
+        """
         try:
-            trades = self._journal.get_trades(symbol=symbol, status="CLOSED", limit=limit + 1)
-            # Exclude the trade being evaluated to avoid data leakage
-            trades = [t for t in trades if t.get("id") != exclude_id][:limit]
-            if not trades:
-                return 0.0
+            current_trade = self._journal.get_trade(exclude_id) if exclude_id else None
+            cutoff_time   = current_trade.get("open_time", "") if current_trade else ""
+
+            trades = self._journal.get_trades(symbol=symbol, status="CLOSED", limit=limit + 10)
+            # Remove the current trade itself
+            trades = [t for t in trades if t.get("id") != exclude_id]
+            # Remove any trade opened AFTER the current trade (future leakage)
+            if cutoff_time:
+                trades = [t for t in trades if t.get("open_time", "") < cutoff_time]
             if strategy:
                 trades = [t for t in trades if t.get("strategy") == strategy]
+            trades = trades[:limit]
             if not trades:
-                return 0.0
+                return 0.5  # neutral prior when no history
             wins = sum(1 for t in trades if _safe_float(t.get("pnl_usd")) > 0)
             return round(wins / len(trades), 4)
         except Exception as exc:
             logger.debug("Historical win-rate query failed: %s", exc)
-            return 0.0
+            return 0.5  # neutral prior on error
+
+    def _factor_features(self, trade: dict) -> dict[str, float]:
+        """
+        Extract the 12 individual confluence factor scores stored at trade open.
+        These reveal WHICH signals fired, not just the total confluence score.
+        keys: factor_trend, factor_momentum, factor_oscillator, factor_ichimoku,
+              factor_squeeze, factor_killzone, factor_candle, factor_htf,
+              factor_volume, factor_news, factor_macro, factor_regime
+        """
+        factor_names = [
+            "trend", "momentum", "oscillator", "ichimoku",
+            "squeeze", "killzone", "candle", "htf",
+            "volume", "news", "macro", "regime",
+        ]
+        result = {f"factor_{n}": 0.0 for n in factor_names}
+        try:
+            raw = trade.get("factors_json") or ""
+            if not raw:
+                # Fall back to raw_signal which may also carry factors
+                raw_sig = trade.get("raw_signal") or ""
+                if isinstance(raw_sig, str):
+                    raw_sig = json.loads(raw_sig) if raw_sig else {}
+                raw = json.dumps(raw_sig.get("factors", {})) if isinstance(raw_sig, dict) else ""
+            factors = json.loads(raw) if isinstance(raw, str) and raw else (raw if isinstance(raw, dict) else {})
+            for name in factor_names:
+                factor_data = factors.get(name, {})
+                if isinstance(factor_data, dict):
+                    result[f"factor_{name}"] = _safe_float(factor_data.get("score", 0.0))
+                else:
+                    result[f"factor_{name}"] = _safe_float(factor_data)
+        except Exception as exc:
+            logger.debug("factor_features extraction failed: %s", exc)
+        return result
+
+    def _exit_features(self, trade: dict) -> dict[str, float]:
+        """
+        Market state at trade close (populated when trade is closed).
+        Helps ML understand WHY a trade hit SL vs TP.
+        """
+        result: dict[str, float] = {
+            "exit_regime_encoded":  0.0,
+            "exit_atr":             0.0,
+            "hold_time_minutes":    0.0,
+        }
+        try:
+            result["exit_regime_encoded"] = _encode_map(
+                trade.get("exit_regime"), _REGIME_MAP, default=0.0
+            )
+            result["exit_atr"]          = _safe_float(trade.get("exit_atr", 0.0))
+            result["hold_time_minutes"] = _safe_float(trade.get("hold_time_minutes", 0.0))
+        except Exception as exc:
+            logger.debug("exit_features extraction failed: %s", exc)
+        return result
 
     # ── Indicator helpers ──────────────────────────────────────────────────────
 
