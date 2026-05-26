@@ -185,6 +185,20 @@ def main() -> None:
 
     logger.info("TradingBotV2 running — press Ctrl+C or send SIGTERM to stop")
 
+    # Send Telegram startup notification
+    try:
+        from v2.api.telegram_bot import TelegramAlerter
+        alerter = TelegramAlerter()
+        alerter.send_text(
+            "TradingBotV2 started\n"
+            "MT5: connected\n"
+            "Paper trading: ACTIVE\n"
+            "Instruments: XAUUSD, GBPJPY, WTI, NAS100, BTCUSDT, ETHUSDT\n"
+            "Signals scan: every 1H and 4H"
+        )
+    except Exception:
+        pass
+
     # Block here until a shutdown signal is received.
     _shutdown_event.wait()
 
