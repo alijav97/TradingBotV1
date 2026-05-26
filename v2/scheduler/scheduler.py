@@ -215,10 +215,15 @@ class BotScheduler:
             "direction":        direction,
             "entry_price":      entry_price,
             "stop_loss":        stop_loss,
+            "tp1_price":        result.get("tp1_price"),
+            "tp2_price":        result.get("tp2_price"),
             "score":            result.get("score"),
             "confluence_score": result.get("score"),
             "strategy":         result.get("strategy", ""),
             "timeframe":        timeframe,
+            "signal_path":      result.get("signal_path", "unknown"),
+            "reasons":          result.get("reasons", []),
+            "factors":          result.get("factors", {}),
         }
 
         checklist = validate_entry(signal, df)
@@ -229,11 +234,33 @@ class BotScheduler:
             self._journal.log_signal(signal, taken=False, skip_reason=checklist["failed_at"])
             return
 
+        # ── ML confidence gate ─────────────────────────────────────────────────
+        ml_confidence = self._get_ml_confidence(signal, df)
+        if ml_confidence < 0.40:
+            logger.info(
+                "Signal rejected by ML: %s %s confidence=%.2f",
+                symbol, direction, ml_confidence,
+            )
+            self._journal.log_signal(signal, taken=False, skip_reason=f"ML confidence {ml_confidence:.2f}")
+            return
+        signal["ml_confidence"] = round(ml_confidence, 3)
+
         # Open paper trade
         trade_id = self._pt.open_trade(signal)
         if trade_id:
             self._journal.log_signal(signal, taken=True)
             self._send_trade_alert(signal, trade_id)
+
+    def _get_ml_confidence(self, signal: dict, df) -> float:
+        """Return ML win probability for a signal. Returns 0.5 if ML unavailable."""
+        try:
+            from v2.ml.ml_engine import MLEngine
+            if not hasattr(self, "_ml_engine"):
+                self._ml_engine = MLEngine(journal=self._journal, feed=self._feed)
+            return self._ml_engine.get_signal_confidence(signal, df=df)
+        except Exception as exc:
+            logger.debug("ML confidence unavailable: %s — defaulting to 0.5", exc)
+            return 0.5   # allow trade when ML is not trained yet
 
     def _job_morning_briefing(self) -> None:
         """Log morning briefing stats and send Telegram alert."""

@@ -1,12 +1,11 @@
 """
-signals/confluence_engine.py — Signal confluence scorer for TradingBotV2.
+signals/confluence_engine.py — Signal engine for TradingBotV2.
 
-Rebuilt from scratch (not copied from V1). V1 had tight coupling and
-silent failures on missing modules. V2 version:
-  - No optional imports with fallbacks hidden in try/except
-  - Each scoring factor is an independent method that returns (score, reason)
-  - Dependency injection via constructor (no global state)
-  - Explicit logging for every factor evaluated
+Primary path: StrategySelector — each instrument has dedicated strategy modules
+  that implement real trading logic (ICT Gold, London Breakout, SMC OB, etc.)
+
+Fallback path: the original 12-factor generic scorer fires when no strategy
+  produces a qualifying signal (score >= min_score).
 
 Usage:
     from v2.signals.confluence_engine import ConfluenceEngine
@@ -22,18 +21,23 @@ import pandas as pd
 
 from v2.analysis.indicators import get_all_indicators
 from v2.analysis.candle_patterns import detect_patterns
+from v2.signals.strategies.strategy_selector import StrategySelector
 
 logger = logging.getLogger(__name__)
 
 # Minimum score to generate a tradeable signal
 MIN_SCORE = 4.0
 
+_selector = StrategySelector()
+
 
 class ConfluenceEngine:
     """
-    Scores a potential trade on up to 12 factors.
-    Each factor returns 0 or 1 point (some return 0.5 for partial alignment).
-    Signal fires if total score >= MIN_SCORE.
+    Signal engine with two paths:
+      1. Strategy selector (primary) — specific logic per instrument
+      2. 12-factor generic scorer (fallback)
+
+    score() always returns the same dict shape regardless of which path fired.
     """
 
     def __init__(self, min_score: float = MIN_SCORE) -> None:
@@ -80,6 +84,35 @@ class ConfluenceEngine:
         if context is None:
             context = {}
 
+        # ── PRIMARY PATH: Strategy Selector ──────────────────────────────────
+        try:
+            strat_result = _selector.select(symbol, direction, df_h1, df_h4, df_d1, context)
+            if strat_result and strat_result.signal and strat_result.score >= self.min_score:
+                logger.info(
+                    "Strategy signal: %s %s %s score=%.1f entry=%.5f",
+                    symbol, direction, strat_result.strategy_name,
+                    strat_result.score, strat_result.entry_price,
+                )
+                return {
+                    "symbol":      symbol,
+                    "direction":   direction,
+                    "score":       strat_result.score,
+                    "max_score":   10,
+                    "signal":      True,
+                    "factors":     strat_result.factors,
+                    "reasons":     strat_result.reasons,
+                    "entry_price": strat_result.entry_price,
+                    "stop_loss":   strat_result.stop_loss,
+                    "tp1_price":   strat_result.tp1_price,
+                    "tp2_price":   strat_result.tp2_price,
+                    "strategy":    strat_result.strategy_name,
+                    "timeframe":   "H1",
+                    "signal_path": "strategy",
+                }
+        except Exception as exc:
+            logger.error("StrategySelector error for %s %s: %s", symbol, direction, exc, exc_info=True)
+
+        # ── FALLBACK PATH: 12-factor generic scorer ───────────────────────────
         is_long = direction.lower() in ("long", "buy")
         factors: dict[str, dict] = {}
         total_score = 0.0
@@ -184,6 +217,12 @@ class ConfluenceEngine:
             symbol, direction, total_score, htf_score, signal_fires
         )
 
+        # Fallback TP calculation (2:1 and 4:1 RR)
+        sl_dist = abs(entry_price - sl_price) if entry_price and sl_price else 0
+        is_long_fb = direction.lower() in ("long", "buy")
+        tp1_fb = round(entry_price + sl_dist * 2, 5) if is_long_fb else round(entry_price - sl_dist * 2, 5)
+        tp2_fb = round(entry_price + sl_dist * 4, 5) if is_long_fb else round(entry_price - sl_dist * 4, 5)
+
         return {
             "symbol":      symbol,
             "direction":   direction,
@@ -194,8 +233,11 @@ class ConfluenceEngine:
             "reasons":     reasons,
             "entry_price": entry_price,
             "stop_loss":   sl_price,
+            "tp1_price":   tp1_fb,
+            "tp2_price":   tp2_fb,
             "strategy":    strategy,
             "timeframe":   "H1",
+            "signal_path": "fallback_12factor",
         }
 
     # ── Scoring factors ───────────────────────────────────────────────────────
