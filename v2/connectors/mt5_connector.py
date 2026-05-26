@@ -117,6 +117,9 @@ def get_ohlcv(
         logger.error("Unknown timeframe: %s", timeframe)
         return _empty_ohlcv()
 
+    # Ensure symbol is subscribed in Market Watch — required for live data
+    mt5.symbol_select(symbol, True)
+
     rates = mt5.copy_rates_from_pos(symbol, tf, 0, count)
     if rates is None or len(rates) == 0:
         logger.warning("No rates returned for %s %s: %s", symbol, timeframe, mt5.last_error())
@@ -138,6 +141,7 @@ def get_live_price(symbol: str) -> dict:
     if not _MT5_AVAILABLE or not _connected:
         return {}
 
+    mt5.symbol_select(symbol, True)
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         return {}
@@ -156,6 +160,7 @@ def get_spread_pips(symbol: str) -> float:
     if not _MT5_AVAILABLE or not _connected:
         return 0.0
 
+    mt5.symbol_select(symbol, True)
     info = mt5.symbol_info(symbol)
     tick = mt5.symbol_info_tick(symbol)
     if info is None or tick is None:

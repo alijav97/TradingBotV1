@@ -177,12 +177,32 @@ class BotScheduler:
             symbol, direction, result["score"], result.get("strategy", "")
         )
 
+        # Override entry price with live tick so we never trade on stale H1 close
+        live = self._feed.get_price(symbol)
+        live_price = live.get("price") if live else None
+        entry_price = live_price or result.get("entry_price")
+
+        # Recalculate SL distance relative to live price (keep same pip distance)
+        h1_entry = result.get("entry_price") or 0
+        h1_sl    = result.get("stop_loss") or 0
+        if h1_entry and h1_sl and entry_price and entry_price != h1_entry:
+            sl_dist  = abs(h1_entry - h1_sl)
+            is_long  = direction.lower() in ("long", "buy")
+            stop_loss = round(entry_price - sl_dist, 5) if is_long else round(entry_price + sl_dist, 5)
+        else:
+            stop_loss = h1_sl
+
+        logger.info(
+            "Entry override: H1 close=%.5f -> live=%.5f (SL=%.5f)",
+            h1_entry, entry_price, stop_loss,
+        )
+
         # Run entry checklist
         signal = {
             "symbol":           symbol,
             "direction":        direction,
-            "entry_price":      result.get("entry_price"),
-            "stop_loss":        result.get("stop_loss"),
+            "entry_price":      entry_price,
+            "stop_loss":        stop_loss,
             "score":            result.get("score"),
             "confluence_score": result.get("score"),
             "strategy":         result.get("strategy", ""),
