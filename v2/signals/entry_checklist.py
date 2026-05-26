@@ -101,7 +101,10 @@ def validate_entry(signal: dict, df: pd.DataFrame | None = None, skip_news: bool
         failed_at = "News Safety"
 
     # ── CHECK 5: Spread / Liquidity ───────────────────────────────────────────
-    c5 = _check_session()
+    if skip_news:  # backtest mode — skip real-time session check too
+        c5 = {"passed": True, "reason": "Session check skipped (backtest mode)"}
+    else:
+        c5 = _check_session()
     checks["Session Quality"] = c5
     if not c5["passed"] and failed_at is None:
         failed_at = "Session Quality"
