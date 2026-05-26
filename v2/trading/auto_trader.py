@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 from v2.instrument_config import ALL_SYMBOLS
 from v2.signals.entry_checklist import validate_entry
 from v2.risk.loss_limits import LossLimits
+from v2.signals.m1_entry_refiner import refine_entry
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +298,9 @@ class AutoTrader:
         trade_id: str | None = None
         if checklist_passed:
             try:
+                # ICT Step 4: M1 IFVG precision entry for XAUUSD
+                signal = refine_entry(signal, self._feed)
+
                 # PaperTrader internally checks portfolio heat + correlation limits.
                 trade_id = self._pt.open_trade(signal)
                 if trade_id is None:
