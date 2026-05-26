@@ -180,6 +180,18 @@ class BotScheduler:
         # Override entry price with live tick so we never trade on stale H1 close
         live = self._feed.get_price(symbol)
         live_price = live.get("price") if live else None
+
+        # Sanity check: if live price deviates >3% from H1 close, data is stale — skip
+        h1_close = result.get("entry_price") or 0
+        if live_price and h1_close:
+            deviation_pct = abs(live_price - h1_close) / h1_close * 100
+            if deviation_pct > 3.0:
+                logger.warning(
+                    "SKIPPING %s — live price %.5f vs H1 close %.5f (%.1f%% apart, likely stale data)",
+                    symbol, live_price, h1_close, deviation_pct,
+                )
+                return
+
         entry_price = live_price or result.get("entry_price")
 
         # Recalculate SL distance relative to live price (keep same pip distance)
