@@ -79,49 +79,76 @@ class TelegramAlerter:
         return self.send_text(msg)
 
     def send_trade_opened(self, trade: dict) -> bool:
-        """
-        Send an alert when a paper trade is opened.
-
-        Expected trade keys:
-            symbol, direction, entry_price, stop_loss, tp1_price, lot_size
-        """
+        from datetime import datetime, timezone
         symbol    = trade.get("symbol", "?")
         direction = (trade.get("direction") or "").upper()
         entry     = trade.get("entry_price", 0)
         sl        = trade.get("stop_loss", 0)
         tp1       = trade.get("tp1_price", 0)
+        tp2       = trade.get("tp2_price", 0)
         lot       = trade.get("lot_size", 0)
+        score     = trade.get("confluence_score", 0)
+        strategy  = trade.get("strategy", "")
+        now       = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         msg = (
-            f"✅ TRADE OPENED\n"
-            f"{symbol} {direction}\n"
-            f"@ {entry}\n"
-            f"SL: {sl} | TP1: {tp1}\n"
-            f"Lot: {lot}"
+            f"TRADE OPENED\n"
+            f"Instrument: {symbol}\n"
+            f"Direction:  {direction}\n"
+            f"Entry:      {entry}\n"
+            f"Stop Loss:  {sl}\n"
+            f"TP1:        {tp1}\n"
+            f"TP2:        {tp2}\n"
+            f"Lot size:   {lot}\n"
+            f"Score:      {score}/12\n"
+            f"Strategy:   {strategy}\n"
+            f"Time:       {now}"
+        )
+        return self.send_text(msg)
+
+    def send_tp1_hit(self, trade: dict, current_price: float) -> bool:
+        symbol    = trade.get("symbol", "?")
+        direction = (trade.get("direction") or "").upper()
+        entry     = trade.get("entry_price", 0)
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        msg = (
+            f"TP1 HIT - SL moved to breakeven\n"
+            f"Instrument: {symbol}\n"
+            f"Direction:  {direction}\n"
+            f"Entry:      {entry}\n"
+            f"TP1 price:  {current_price}\n"
+            f"SL now at:  {entry} (breakeven)\n"
+            f"Time:       {now}\n"
+            f"Trade still open - targeting TP2"
         )
         return self.send_text(msg)
 
     def send_trade_closed(self, trade: dict) -> bool:
-        """
-        Send an alert when a paper trade is closed.
-
-        Expected trade keys:
-            symbol, direction, exit_reason, pnl_usd (or pnl), rr_achieved
-        """
+        from datetime import datetime, timezone
         symbol     = trade.get("symbol", "?")
         direction  = (trade.get("direction") or "").upper()
         reason     = trade.get("exit_reason", "")
+        entry      = trade.get("entry_price", 0)
+        exit_price = trade.get("exit_price", 0)
         pnl        = float(trade.get("pnl_usd") or trade.get("pnl") or 0)
         rr         = trade.get("rr_achieved", 0)
+        now        = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-        icon     = "🟢" if pnl > 0 else "🔴"
+        icon     = "WIN" if pnl > 0 else ("BREAKEVEN" if pnl == 0 else "LOSS")
         pnl_sign = "+" if pnl > 0 else ""
 
         msg = (
-            f"{icon} TRADE CLOSED\n"
-            f"{symbol} {direction} {reason}\n"
-            f"PnL: {pnl_sign}{pnl:.2f}\n"
-            f"R:R: {rr}"
+            f"TRADE CLOSED - {icon}\n"
+            f"Instrument: {symbol}\n"
+            f"Direction:  {direction}\n"
+            f"Reason:     {reason}\n"
+            f"Entry:      {entry}\n"
+            f"Exit:       {exit_price}\n"
+            f"PnL:        {pnl_sign}{pnl:.2f} USD\n"
+            f"R:R:        {rr}\n"
+            f"Time:       {now}"
         )
         return self.send_text(msg)
 

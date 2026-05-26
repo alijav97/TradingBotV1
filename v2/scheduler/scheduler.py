@@ -240,16 +240,23 @@ class BotScheduler:
         action_type = action.get("action", "")
         trade_id    = action.get("trade_id", "")
 
-        if action_type in ("SL", "TP1", "TP2", "MANUAL", "MAX_HOLD"):
-            # Fetch full trade record from journal for rich formatting
-            trade = self._journal.get_trade(trade_id)
+        trade = self._journal.get_trade(trade_id)
+
+        if action_type == "TP1":
+            # TP1 = partial hit, SL moved to breakeven — trade still open
+            if trade:
+                self._alerter.send_tp1_hit(trade, action.get("price", 0))
+            return
+
+        if action_type in ("SL", "TP2", "MANUAL", "MAX_HOLD", "SL_AFTER_TP1"):
+            # These are full closes
             if trade:
                 self._alerter.send_trade_closed(trade)
-                return
+            return
 
-        # Fallback: raw text for any other action type
+        # Fallback for any other action
         self._alerter.send_text(
-            f"⚙️ TRADE ACTION\n"
+            f"TRADE ACTION\n"
             f"ID: {trade_id[:8]}\n"
             f"Action: {action_type}\n"
             f"Price: {action.get('price', '?')}"
