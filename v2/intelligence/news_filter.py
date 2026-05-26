@@ -38,7 +38,7 @@ def fetch_ff_calendar() -> list[dict]:
 
     if time.time() < _FF_RATE_LIMITED_UNTIL:
         remaining = int((_FF_RATE_LIMITED_UNTIL - time.time()) / 60)
-        logger.info("FF rate limited — skipping (%dm remaining)", remaining)
+        logger.debug("FF rate limited — skipping (%dm remaining)", remaining)
         return []
 
     headers = {

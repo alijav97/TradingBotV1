@@ -37,7 +37,7 @@ NEWS_BLOCK_AFTER = 30     # block X minutes after high-impact event
 GST = timezone(timedelta(hours=4))
 
 
-def validate_entry(signal: dict, df: pd.DataFrame | None = None) -> dict:
+def validate_entry(signal: dict, df: pd.DataFrame | None = None, skip_news: bool = False) -> dict:
     """
     Run all 5 entry checks on a signal.
 
@@ -92,7 +92,10 @@ def validate_entry(signal: dict, df: pd.DataFrame | None = None) -> dict:
         failed_at = "Risk/Reward Ratio"
 
     # ── CHECK 4: News Safety Window ───────────────────────────────────────────
-    c4 = _check_news(is_news_fade)
+    if skip_news:
+        c4 = {"passed": True, "reason": "News check skipped (backtest mode)"}
+    else:
+        c4 = _check_news(is_news_fade)
     checks["News Safety"] = c4
     if not c4["passed"] and failed_at is None:
         failed_at = "News Safety"

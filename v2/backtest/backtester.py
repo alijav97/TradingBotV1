@@ -215,8 +215,8 @@ class Backtester:
                     "regime":           result.get("regime", ""),
                 }
 
-                # Entry checklist (same gates as live)
-                checklist = validate_entry(signal, window)
+                # Entry checklist — skip live news check during backtest
+                checklist = validate_entry(signal, window, skip_news=True)
                 if not checklist.get("passed"):
                     continue
 
