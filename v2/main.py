@@ -29,10 +29,21 @@ Docker
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 import threading
+from pathlib import Path
 from typing import Any
+
+# Load .env from C:\TradingBotV2\.env or repo root before anything else
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(os.environ.get("ENV_FILE", Path(__file__).parent.parent / ".env"))
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+except ImportError:
+    pass
 
 # ── Logging must be configured before any v2 imports so all modules pick it up.
 logging.basicConfig(
