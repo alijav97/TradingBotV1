@@ -170,11 +170,18 @@ class ConfluenceEngine:
         # ── Best matching strategy ────────────────────────────────────────────
         strategy = self._match_strategy(symbol, direction, factors)
 
-        signal_fires = total_score >= self.min_score
+        # ── Hard gate: at least one HTF timeframe (H4 or D1) must not
+        #    contradict direction — avoids trading against the higher TF trend
+        htf_score = factors["htf"]["score"]
+        htf_available = (df_h4 is not None and not df_h4.empty) or \
+                        (df_d1 is not None and not df_d1.empty)
+        htf_blocked = htf_available and htf_score == 0
+
+        signal_fires = (total_score >= self.min_score) and (not htf_blocked)
 
         logger.debug(
-            "%s %s score=%.1f/12 signal=%s",
-            symbol, direction, total_score, signal_fires
+            "%s %s score=%.1f/12 htf=%.1f signal=%s",
+            symbol, direction, total_score, htf_score, signal_fires
         )
 
         return {

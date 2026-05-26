@@ -25,7 +25,7 @@ DAILY_LOSS_LIMIT   = float(os.environ.get("DAILY_LOSS_LIMIT", "3.0"))    # % of 
 WEEKLY_LOSS_LIMIT  = float(os.environ.get("WEEKLY_LOSS_LIMIT", "6.0"))   # % of account
 
 # ── Signal thresholds ─────────────────────────────────────────────────────────
-MIN_CONFLUENCE_SCORE = float(os.environ.get("MIN_CONFLUENCE_SCORE", "3.0"))
+MIN_CONFLUENCE_SCORE = float(os.environ.get("MIN_CONFLUENCE_SCORE", "7.0"))
 MIN_RR_RATIO         = float(os.environ.get("MIN_RR_RATIO", "2.0"))
 MAX_SPREAD_PIPS      = float(os.environ.get("MAX_SPREAD_PIPS", "3.0"))
 

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────────────
 MIN_RR           = 2.0    # minimum reward-to-risk
 MIN_RR_NEWS_FADE = 1.5    # exception for news-fade trades
-MIN_CONFLUENCE   = 3.0    # minimum confluence score (out of 12)
+MIN_CONFLUENCE   = 7.0    # minimum confluence score (out of 12)
 NEWS_BLOCK_MIN   = 30     # block X minutes before high-impact event
 NEWS_BLOCK_AFTER = 30     # block X minutes after high-impact event
 
@@ -104,7 +104,7 @@ def validate_entry(signal: dict, df: pd.DataFrame | None = None, skip_news: bool
     if skip_news:  # backtest mode — skip real-time session check too
         c5 = {"passed": True, "reason": "Session check skipped (backtest mode)"}
     else:
-        c5 = _check_session()
+        c5 = _check_session(symbol=signal.get("symbol", ""))
     checks["Session Quality"] = c5
     if not c5["passed"] and failed_at is None:
         failed_at = "Session Quality"
@@ -205,19 +205,49 @@ def _check_news(is_news_fade: bool) -> dict:
         return {"passed": True, "reason": "News check unavailable — skipped"}
 
 
-def _check_session() -> dict:
-    """CHECK 5: Trading in a viable session (not dead hours)."""
-    now = datetime.now(GST)
+def _check_session(symbol: str = "") -> dict:
+    """CHECK 5: Trading in a viable session for this specific instrument."""
+    now  = datetime.now(GST)
     hour = now.hour
 
-    # Dead zones: late NY / off-hours (22:00–04:00 GST)
-    if hour >= 22 or hour < 4:
+    # Dead zones for all instruments: 22:00–06:00 GST
+    if hour >= 22 or hour < 6:
         return {"passed": False, "reason": f"Off-hours ({hour:02d}:xx GST) — no liquidity"}
 
-    # Good sessions
-    if 12 <= hour < 21:
-        session = "London" if hour < 17 else "NewYork"
-        return {"passed": True, "reason": f"Active session: {session}"}
+    # London session:  08:00–16:00 UTC = 12:00–20:00 GST
+    # New York session: 13:00–21:00 UTC = 17:00–01:00 GST (capped at 22:00)
+    in_london = 12 <= hour < 20
+    in_newyork = 17 <= hour < 22
 
-    # Borderline (Asian pre-London)
-    return {"passed": True, "reason": f"Borderline session ({hour:02d}:xx GST)"}
+    sym = symbol.upper()
+
+    # GBPJPY — London specialist; NY is OK but avoid Asian
+    if sym == "GBPJPY":
+        if in_london:
+            return {"passed": True, "reason": "London session — GBPJPY optimal"}
+        if in_newyork:
+            return {"passed": True, "reason": "NY overlap — GBPJPY acceptable"}
+        return {"passed": False, "reason": f"GBPJPY: no London/NY session at {hour:02d}:xx GST"}
+
+    # WTI / NAS100 — New York only
+    if sym in ("WTI", "NAS100"):
+        if in_newyork:
+            sess = "NY" if not in_london else "London/NY overlap"
+            return {"passed": True, "reason": f"{sym}: active {sess}"}
+        return {"passed": False, "reason": f"{sym}: NY session only — not active at {hour:02d}:xx GST"}
+
+    # XAUUSD — London + NY only
+    if sym == "XAUUSD":
+        if in_london or in_newyork:
+            sess = "London/NY overlap" if (in_london and in_newyork) else ("London" if in_london else "NewYork")
+            return {"passed": True, "reason": f"XAUUSD: active {sess}"}
+        return {"passed": False, "reason": f"XAUUSD: no active session at {hour:02d}:xx GST"}
+
+    # Crypto — 24/7 but avoid extreme off-hours
+    if sym in ("BTCUSDT", "ETHUSDT"):
+        return {"passed": True, "reason": "Crypto: 24/7 market"}
+
+    # Fallback for unknown symbols
+    if in_london or in_newyork:
+        return {"passed": True, "reason": f"Active session at {hour:02d}:xx GST"}
+    return {"passed": False, "reason": f"No active session at {hour:02d}:xx GST"}
