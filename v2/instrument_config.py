@@ -61,7 +61,7 @@ INSTRUMENTS: dict[str, InstrumentConfig] = {
     "WTI": InstrumentConfig(
         symbol          = "WTI",
         source          = "mt5",
-        mt5_symbol      = "WTI",     # broker-specific — may be "USOIL" or "CL"
+        mt5_symbol      = "SpotCrude",
         binance_symbol  = "",
         pip_value_usd   = 1.0,       # $10 per pip per lot ($0.01 = 1 pip for oil)
         pip_size        = 0.01,
