@@ -95,32 +95,36 @@ class Backtester:
             len(self._instruments), self._days
         )
 
-        total_signals   = 0
-        total_trades    = 0
-        total_wins      = 0
-        total_losses    = 0
-        by_instrument:  dict = {}
+        total_signals    = 0
+        total_trades     = 0
+        total_wins       = 0
+        total_losses     = 0
+        total_breakevens = 0
+        by_instrument:   dict = {}
 
         for symbol in self._instruments:
             logger.info("Backtesting %s ...", symbol)
             try:
                 result = self._backtest_instrument(symbol)
                 by_instrument[symbol] = result
-                total_signals  += result["signals_evaluated"]
-                total_trades   += result["trades_simulated"]
-                total_wins     += result["wins"]
-                total_losses   += result["losses"]
+                total_signals    += result["signals_evaluated"]
+                total_trades     += result["trades_simulated"]
+                total_wins       += result["wins"]
+                total_losses     += result["losses"]
+                total_breakevens += result.get("breakevens", 0)
                 logger.info(
-                    "  %s done: %d trades | WR=%.1f%%",
+                    "  %s done: %d trades | WR=%.1f%% | BE=%d",
                     symbol,
                     result["trades_simulated"],
                     result["win_rate"] * 100,
+                    result.get("breakevens", 0),
                 )
             except Exception as exc:
                 logger.error("Backtest failed for %s: %s", symbol, exc, exc_info=True)
                 by_instrument[symbol] = {"error": str(exc)}
 
-        win_rate = (total_wins / total_trades) if total_trades > 0 else 0.0
+        decisive = total_wins + total_losses
+        win_rate = (total_wins / decisive) if decisive > 0 else 0.0
 
         summary = {
             "instruments_processed": len(self._instruments),
@@ -128,6 +132,7 @@ class Backtester:
             "trades_simulated":      total_trades,
             "wins":                  total_wins,
             "losses":                total_losses,
+            "breakevens":            total_breakevens,
             "win_rate":              round(win_rate, 4),
             "by_instrument":         by_instrument,
         }
@@ -166,8 +171,9 @@ class Backtester:
 
         signals_evaluated = 0
         trades_simulated  = 0
-        wins = 0
-        losses = 0
+        wins       = 0
+        losses     = 0
+        breakevens = 0
 
         # Walk forward: start after MIN_LOOKBACK bars, step every SCAN_STEP bars
         # Leave MAX_HOLD_BARS at the end so every trade has room to resolve
@@ -225,20 +231,24 @@ class Backtester:
                 trade_id = self._write_backtest_trade(signal, outcome, window)
                 trades_simulated += 1
 
-                if outcome["exit_reason"] in ("TP1", "TP2", "SL_AFTER_TP1"):
+                if outcome["exit_reason"] in ("TP1", "TP2"):
                     wins += 1
+                elif outcome["exit_reason"] == "SL_AFTER_TP1":
+                    breakevens += 1  # TP1 hit then stopped at entry
                 else:
                     losses += 1
 
                 # Break direction loop — don't take both long AND short at same bar
                 break
 
-        win_rate = (wins / trades_simulated) if trades_simulated > 0 else 0.0
+        decisive = wins + losses
+        win_rate = (wins / decisive) if decisive > 0 else 0.0
         return {
             "signals_evaluated": signals_evaluated,
             "trades_simulated":  trades_simulated,
             "wins":              wins,
             "losses":            losses,
+            "breakevens":        breakevens,
             "win_rate":          round(win_rate, 4),
         }
 

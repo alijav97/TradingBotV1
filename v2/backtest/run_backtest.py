@@ -163,8 +163,8 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info(" Signals evaluated : %d", summary["signals_evaluated"])
     logger.info(" Trades simulated  : %d", summary["trades_simulated"])
-    logger.info(" Win rate          : %.1f%%", summary["win_rate"] * 100)
-    logger.info(" Wins / Losses     : %d / %d", summary["wins"], summary["losses"])
+    logger.info(" Win rate          : %.1f%%  (excl. breakevens)", summary["win_rate"] * 100)
+    logger.info(" Wins / Losses / BE: %d / %d / %d", summary["wins"], summary["losses"], summary.get("breakevens", 0))
     logger.info("")
 
     for sym, r in summary["by_instrument"].items():
