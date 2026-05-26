@@ -225,7 +225,7 @@ class Backtester:
                 trade_id = self._write_backtest_trade(signal, outcome, window)
                 trades_simulated += 1
 
-                if outcome["exit_reason"] in ("TP1", "TP2"):
+                if outcome["exit_reason"] in ("TP1", "TP2", "SL_AFTER_TP1"):
                     wins += 1
                 else:
                     losses += 1
@@ -378,8 +378,19 @@ class Backtester:
 
         trade_id = self._journal.open_trade(trade)
 
-        # Immediately close with outcome
         hold_minutes = float(outcome["bars_held"]) * 60.0
+
+        # Save ML features BEFORE close_trade so close_trade can set the label
+        trade_row = self._journal.get_trade(trade_id) or {}
+        trade_row["factors_json"] = trade.get("factors", {})
+        trade_row["hold_time_minutes"] = hold_minutes
+        try:
+            features = self._fe.extract(trade_row, df=window)
+            self._journal.save_ml_features(trade_id, features)
+        except Exception as exc:
+            logger.debug("Feature extraction failed for backtest trade %s: %s", trade_id[:8], exc)
+
+        # Now close — close_trade will UPDATE the label on the ml_features row
         exit_context = {
             "hold_time_minutes": hold_minutes,
             "exit_atr":          0.0,
@@ -396,16 +407,6 @@ class Backtester:
             notes       = "backtest",
             exit_context= exit_context,
         )
-
-        # Save ML features (extracted at entry window)
-        trade_row = self._journal.get_trade(trade_id) or {}
-        trade_row["factors_json"] = trade.get("factors", {})
-        trade_row["hold_time_minutes"] = hold_minutes
-        try:
-            features = self._fe.extract(trade_row, df=window)
-            self._journal.save_ml_features(trade_id, features)
-        except Exception as exc:
-            logger.debug("Feature extraction failed for backtest trade %s: %s", trade_id[:8], exc)
 
         return trade_id
 
