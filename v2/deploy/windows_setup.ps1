@@ -154,8 +154,11 @@ $venvPip    = "$venvPath\Scripts\pip.exe"
 
 Write-Step "Installing TA-Lib (precompiled wheel - no C compiler needed)"
 
-$taLibCheck = & $venvPython -c "import talib; print('ok')" 2>&1
-if ($taLibCheck -eq "ok") {
+$taLibCheck = ""
+try {
+    $taLibCheck = & $venvPython -c "import talib; print('ok')" 2>&1
+} catch { }
+if ("$taLibCheck" -eq "ok") {
     Write-Host "TA-Lib already installed - skipping." -ForegroundColor Green
 } else {
     $pyVerShort = (& $venvPython -c "import sys; print(str(sys.version_info.major) + str(sys.version_info.minor))").Trim()
