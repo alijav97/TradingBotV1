@@ -123,13 +123,11 @@ def main() -> None:
     if args.clear:
         logger.info("Clearing existing backtest trades from journal...")
         try:
-            journal._conn.execute(
-                "DELETE FROM trades WHERE notes='backtest'"
-            )
-            journal._conn.execute(
-                """DELETE FROM ml_features WHERE trade_id NOT IN
-                   (SELECT id FROM trades)"""
-            )
+            # Delete ml_features first (child), then trades (parent)
+            journal._conn.execute("PRAGMA foreign_keys = OFF")
+            journal._conn.execute("DELETE FROM ml_features WHERE trade_id IN (SELECT id FROM trades WHERE notes='backtest')")
+            journal._conn.execute("DELETE FROM trades WHERE notes='backtest'")
+            journal._conn.execute("PRAGMA foreign_keys = ON")
             journal._conn.commit()
             logger.info("Existing backtest trades removed.")
         except Exception as exc:

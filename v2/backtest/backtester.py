@@ -179,7 +179,17 @@ class Backtester:
         # Leave MAX_HOLD_BARS at the end so every trade has room to resolve
         end_bar = len(df_full) - MAX_HOLD_BARS - 1
 
+        total_bars = end_bar - MIN_LOOKBACK
         for bar_idx in range(MIN_LOOKBACK, end_bar, SCAN_STEP):
+            # Progress log every 200 bars
+            bars_done = bar_idx - MIN_LOOKBACK
+            if bars_done > 0 and bars_done % 200 == 0:
+                pct = int(bars_done / total_bars * 100)
+                logger.info(
+                    "  %s: %d%% done — %d trades so far (W:%d L:%d BE:%d)",
+                    symbol, pct, trades_simulated, wins, losses, breakevens,
+                )
+
             # Slice history up to current bar (no look-ahead)
             window     = df_full.iloc[:bar_idx + 1].copy()
             window_h4  = self._slice_htf(df_h4,  window, "H4")
