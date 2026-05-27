@@ -24,6 +24,17 @@ MAX_PORTFOLIO_HEAT = float(os.environ.get("MAX_PORTFOLIO_HEAT", "9.0"))  # % tot
 DAILY_LOSS_LIMIT   = float(os.environ.get("DAILY_LOSS_LIMIT", "6.0"))    # % of account (2 losses)
 WEEKLY_LOSS_LIMIT  = float(os.environ.get("WEEKLY_LOSS_LIMIT", "12.0"))  # % of account
 
+# ── Active instruments ────────────────────────────────────────────────────────
+# Comma-separated list of symbols the live bot will scan.
+# Leave blank (or unset) to scan all 6 instruments.
+# Example .env entry:  ACTIVE_SYMBOLS=WTI
+#                      ACTIVE_SYMBOLS=WTI,XAUUSD,GBPJPY
+_active_raw    = os.environ.get("ACTIVE_SYMBOLS", "").strip()
+ACTIVE_SYMBOLS: list[str] = (
+    [s.strip().upper() for s in _active_raw.split(",") if s.strip()]
+    if _active_raw else []   # empty = use ALL_SYMBOLS (resolved in scheduler)
+)
+
 # ── Signal thresholds ─────────────────────────────────────────────────────────
 MIN_CONFLUENCE_SCORE = float(os.environ.get("MIN_CONFLUENCE_SCORE", "7.0"))
 MIN_RR_RATIO         = float(os.environ.get("MIN_RR_RATIO", "2.0"))

@@ -188,13 +188,15 @@ def main() -> None:
     # Send Telegram startup notification
     try:
         from v2.api.telegram_bot import TelegramAlerter
+        from v2.instrument_config import ALL_SYMBOLS
+        active = settings.ACTIVE_SYMBOLS if settings.ACTIVE_SYMBOLS else ALL_SYMBOLS
         alerter = TelegramAlerter()
         alerter.send_text(
-            "TradingBotV2 started\n"
-            "MT5: connected\n"
-            "Paper trading: ACTIVE\n"
-            "Instruments: XAUUSD, GBPJPY, WTI, NAS100, BTCUSDT, ETHUSDT\n"
-            "Signals scan: every 1H and 4H"
+            f"TradingBotV2 started\n"
+            f"MT5: connected\n"
+            f"Paper trading: ACTIVE\n"
+            f"Instruments: {', '.join(active)}\n"
+            f"Signals scan: every 1H and 4H"
         )
     except Exception:
         pass

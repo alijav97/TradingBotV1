@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from v2.connectors.unified_data import DataFeed
 
 from v2.instrument_config import ALL_SYMBOLS
+from v2.settings import ACTIVE_SYMBOLS
 from v2.signals.entry_checklist import validate_entry
 from v2.risk.loss_limits import LossLimits
 from v2.api.telegram_bot import TelegramAlerter
@@ -142,8 +143,9 @@ class BotScheduler:
             logger.error("Monitor job error: %s", exc)
 
     def _job_scan(self, timeframe: str) -> None:
-        """Run confluence scan on all instruments for a given timeframe."""
-        logger.info("Signal scan starting: %s", timeframe)
+        """Run confluence scan on active instruments for a given timeframe."""
+        symbols = ACTIVE_SYMBOLS if ACTIVE_SYMBOLS else ALL_SYMBOLS
+        logger.info("Signal scan starting: %s  instruments=%s", timeframe, symbols)
 
         # Pre-checks
         allowed, reason = self._limits.can_trade()
@@ -151,7 +153,7 @@ class BotScheduler:
             logger.info("Scan aborted: %s", reason)
             return
 
-        for symbol in ALL_SYMBOLS:
+        for symbol in symbols:
             for direction in ("long", "short"):
                 try:
                     self._scan_one(symbol, direction, timeframe)
