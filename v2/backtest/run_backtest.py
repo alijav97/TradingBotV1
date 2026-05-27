@@ -196,6 +196,8 @@ def main() -> None:
     for sym, r in summary["by_instrument"].items():
         if "error" in r:
             logger.info("  %-10s  ERROR: %s", sym, r["error"])
+        elif r.get("note"):
+            logger.info("  %-10s  NO DATA: %s", sym, r["note"])
         else:
             logger.info(
                 "  %-10s  trades=%-4d  WR=%-5.1f%%  wins=%-3d  losses=%-3d  P&L=$%+.2f",

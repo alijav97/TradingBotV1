@@ -233,22 +233,48 @@ class Backtester:
         if (self._start_date is not None or self._end_date is not None) and "time" in df_full.columns:
             try:
                 times = pd.to_datetime(df_full["time"], utc=True)
+                data_start = times.iloc[0]
+                data_end   = times.iloc[-1]
+                logger.info("%s: available data %s → %s",
+                            symbol, data_start.date(), data_end.date())
+
                 if self._start_date is not None:
                     sd = pd.Timestamp(self._start_date)
                     if sd.tzinfo is None:
                         sd = sd.tz_localize("UTC")
+                    if sd > data_end:
+                        logger.warning("%s: requested start %s is AFTER available data end %s — 0 trades",
+                                       symbol, sd.date(), data_end.date())
+                        return {"signals_evaluated": 0, "trades_simulated": 0,
+                                "wins": 0, "losses": 0, "breakevens": 0,
+                                "win_rate": 0.0, "pnl_usd": 0.0,
+                                "pnl_series": [], "ending_balance": current_balance,
+                                "note": f"No data for {sd.date()} — broker only has from {data_start.date()}"}
                     idxs = df_full.index[times >= sd].tolist()
                     if idxs:
                         range_start_idx = max(int(idxs[0]), MIN_LOOKBACK)
-                        logger.info("%s: date range from %s → bar %d", symbol, self._start_date.date(), range_start_idx)
+                        logger.info("%s: date range from %s → bar %d", symbol, sd.date(), range_start_idx)
+
                 if self._end_date is not None:
                     ed = pd.Timestamp(self._end_date)
                     if ed.tzinfo is None:
                         ed = ed.tz_localize("UTC")
+                    if ed < data_start:
+                        logger.warning("%s: requested end %s is BEFORE available data start %s — 0 trades",
+                                       symbol, ed.date(), data_start.date())
+                        return {"signals_evaluated": 0, "trades_simulated": 0,
+                                "wins": 0, "losses": 0, "breakevens": 0,
+                                "win_rate": 0.0, "pnl_usd": 0.0,
+                                "pnl_series": [], "ending_balance": current_balance,
+                                "note": f"No data for {ed.date()} — broker only has from {data_start.date()}"}
                     idxs = df_full.index[times <= ed].tolist()
                     if idxs:
                         range_end_idx = min(int(idxs[-1]) - MAX_HOLD_BARS, end_bar)
-                        logger.info("%s: date range to   %s → bar %d", symbol, self._end_date.date(), range_end_idx)
+                        logger.info("%s: date range to   %s → bar %d", symbol, ed.date(), range_end_idx)
+                    else:
+                        logger.warning("%s: no bars before %s — 0 trades", symbol, ed.date())
+                        range_end_idx = range_start_idx  # empty range
+
             except Exception as exc:
                 logger.warning("%s: date-range filter failed (%s) — using full range", symbol, exc)
 
