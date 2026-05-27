@@ -162,7 +162,6 @@ class Backtester:
             "total_return_pct":  return_pct,
             "peak_balance":      round(ACCOUNT_BALANCE + total_pnl_usd, 2),
             "max_drawdown_pct":  round(max_drawdown_pct, 1),
-            "equity_curve":      equity_curve,
         }
 
         logger.info(
@@ -434,26 +433,26 @@ class Backtester:
         tp1_was_hit = outcome.get("tp1_hit", False)
         tp1_price   = float(outcome.get("tp1_price") or 0)
 
+        price_diff = (exit_price - entry) if is_long else (entry - exit_price)
+
         try:
             cfg = get_instrument(symbol)
 
             if tp1_was_hit and tp1_price > 0:
                 # 50% closed at TP1, 50% closed at final exit
                 tp1_diff   = (tp1_price - entry) if is_long else (entry - tp1_price)
-                final_diff = (exit_price - entry) if is_long else (entry - exit_price)
+                final_diff = price_diff
                 pnl_tp1    = (tp1_diff   / cfg.pip_size) * cfg.pip_value_usd * lot_size * 0.5
                 pnl_final  = (final_diff / cfg.pip_size) * cfg.pip_value_usd * lot_size * 0.5
                 pnl_usd    = pnl_tp1 + pnl_final
                 pips       = ((tp1_diff + final_diff) / 2) / cfg.pip_size
             else:
-                price_diff = (exit_price - entry) if is_long else (entry - exit_price)
                 pips       = price_diff / cfg.pip_size
                 pnl_usd    = pips * cfg.pip_value_usd * lot_size
 
         except Exception:
-            price_diff = (exit_price - entry) if is_long else (entry - exit_price)
-            pips       = price_diff / 0.01 if price_diff != 0 else 0
-            pnl_usd    = risk_usd * (price_diff / abs(entry - sl)) if abs(entry - sl) > 0 else 0
+            pips    = price_diff / 0.01 if price_diff != 0 else 0
+            pnl_usd = risk_usd * (price_diff / abs(entry - sl)) if abs(entry - sl) > 0 else 0
 
         pnl_usd = round(pnl_usd, 2)
         pips    = round(pips, 1)
