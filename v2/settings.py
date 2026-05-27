@@ -17,12 +17,12 @@ for _d in (DATA_DIR, LOG_DIR, MODEL_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Account ───────────────────────────────────────────────────────────────────
-ACCOUNT_BALANCE    = float(os.environ.get("ACCOUNT_BALANCE", "10000"))   # USD
-RISK_PER_TRADE_PCT = float(os.environ.get("RISK_PER_TRADE_PCT", "1.0"))  # % per trade
-MAX_OPEN_TRADES    = int(os.environ.get("MAX_OPEN_TRADES", "6"))
-MAX_PORTFOLIO_HEAT = float(os.environ.get("MAX_PORTFOLIO_HEAT", "30.0")) # % total at risk
-DAILY_LOSS_LIMIT   = float(os.environ.get("DAILY_LOSS_LIMIT", "3.0"))    # % of account
-WEEKLY_LOSS_LIMIT  = float(os.environ.get("WEEKLY_LOSS_LIMIT", "6.0"))   # % of account
+ACCOUNT_BALANCE    = float(os.environ.get("ACCOUNT_BALANCE", "500"))     # USD
+RISK_PER_TRADE_PCT = float(os.environ.get("RISK_PER_TRADE_PCT", "3.0"))  # % per trade
+MAX_OPEN_TRADES    = int(os.environ.get("MAX_OPEN_TRADES", "2"))
+MAX_PORTFOLIO_HEAT = float(os.environ.get("MAX_PORTFOLIO_HEAT", "9.0"))  # % total at risk (2 trades × 3% + buffer)
+DAILY_LOSS_LIMIT   = float(os.environ.get("DAILY_LOSS_LIMIT", "6.0"))    # % of account (2 losses)
+WEEKLY_LOSS_LIMIT  = float(os.environ.get("WEEKLY_LOSS_LIMIT", "12.0"))  # % of account
 
 # ── Signal thresholds ─────────────────────────────────────────────────────────
 MIN_CONFLUENCE_SCORE = float(os.environ.get("MIN_CONFLUENCE_SCORE", "7.0"))

@@ -88,12 +88,13 @@ def calculate_tp_prices(
     stop_loss: float,
     direction: str,
     rr1: float = 2.0,
-    rr2: float = 3.0,
+    rr2: float = 5.0,
 ) -> tuple[float, float]:
     """
     Return (tp1_price, tp2_price) based on RR ratios.
 
-    rr1=2.0 means TP1 is 2× the SL distance from entry.
+    rr1=2.0 → TP1 is 2× SL distance (partial close, SL moves to BE)
+    rr2=5.0 → TP2 is 5× SL distance (full close, 1:5 RR)
     """
     sl_dist = abs(entry - stop_loss)
     if direction.lower() in ("long", "buy"):
