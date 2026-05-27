@@ -118,7 +118,7 @@ class ConfluenceEngine:
         # The generic scorer does not understand instrument-specific nuances and
         # produces lower-quality signals that drag down overall WR.
         from v2.signals.strategies.strategy_selector import _INSTRUMENT_MIN_SCORE
-        _STRATEGY_ONLY = {"XAUUSD", "BTCUSDT", "ETHUSDT"}
+        _STRATEGY_ONLY = {"XAUUSD", "BTCUSDT", "ETHUSDT", "WTI"}
         if symbol.upper() in _STRATEGY_ONLY:
             return {"symbol": symbol, "direction": direction, "score": 0.0,
                     "max_score": 10, "signal": False, "factors": {}, "reasons": [],
