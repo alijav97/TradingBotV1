@@ -170,10 +170,20 @@ def main() -> None:
             logger.info("  %-10s  ERROR: %s", sym, r["error"])
         else:
             logger.info(
-                "  %-10s  trades=%-4d  WR=%-5.1f%%  wins=%-3d  losses=%d",
-                sym, r["trades_simulated"], r["win_rate"] * 100, r["wins"], r["losses"]
+                "  %-10s  trades=%-4d  WR=%-5.1f%%  wins=%-3d  losses=%-3d  P&L=$%+.2f",
+                sym, r["trades_simulated"], r["win_rate"] * 100,
+                r["wins"], r["losses"], r.get("pnl_usd", 0),
             )
 
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info(" COMPOUNDING RESULTS  (starting balance: $%.2f)", summary.get("starting_balance", 0))
+    logger.info("=" * 60)
+    logger.info("  Ending balance   : $%.2f", summary.get("ending_balance", 0))
+    logger.info("  Total P&L        : $%+.2f  (%+.1f%%)", summary.get("total_pnl_usd", 0), summary.get("total_return_pct", 0))
+    logger.info("  Peak balance     : $%.2f", summary.get("peak_balance", 0))
+    logger.info("  Max drawdown     : %.1f%%", summary.get("max_drawdown_pct", 0))
+    logger.info("=" * 60)
     logger.info("")
 
     n_trades = summary["trades_simulated"]

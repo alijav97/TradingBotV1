@@ -80,19 +80,12 @@ class Backtester:
         """
         Run the full backtest across all configured instruments.
 
-        Returns a summary dict:
-        {
-            "instruments_processed": int,
-            "signals_evaluated":     int,
-            "trades_simulated":      int,
-            "wins": int, "losses": int,
-            "win_rate": float,
-            "by_instrument": {symbol: {...}}
-        }
+        Returns a summary dict including compounded P&L stats.
         """
+        from v2.settings import ACCOUNT_BALANCE
         logger.info(
-            "Backtest starting: %d instruments, %d days of history",
-            len(self._instruments), self._days
+            "Backtest starting: %d instruments, %d days of history | Starting balance: $%.2f",
+            len(self._instruments), self._days, ACCOUNT_BALANCE,
         )
 
         total_signals    = 0
@@ -102,29 +95,50 @@ class Backtester:
         total_breakevens = 0
         by_instrument:   dict = {}
 
+        # Compounding: balance updates after every trade across all instruments
+        current_balance  = ACCOUNT_BALANCE
+        peak_balance     = ACCOUNT_BALANCE
+        max_drawdown_pct = 0.0
+        equity_curve: list[float] = [ACCOUNT_BALANCE]
+
         for symbol in self._instruments:
-            logger.info("Backtesting %s ...", symbol)
+            logger.info("Backtesting %s ... (current balance: $%.2f)", symbol, current_balance)
             try:
-                result = self._backtest_instrument(symbol)
+                result = self._backtest_instrument(symbol, starting_balance=current_balance)
                 by_instrument[symbol] = result
                 total_signals    += result["signals_evaluated"]
                 total_trades     += result["trades_simulated"]
                 total_wins       += result["wins"]
                 total_losses     += result["losses"]
                 total_breakevens += result.get("breakevens", 0)
+
+                # Update running balance and track drawdown
+                for pnl in result.get("pnl_series", []):
+                    current_balance += pnl
+                    current_balance  = max(current_balance, 0.01)   # floor at 1 cent
+                    equity_curve.append(round(current_balance, 2))
+                    if current_balance > peak_balance:
+                        peak_balance = current_balance
+                    dd = (peak_balance - current_balance) / peak_balance * 100
+                    if dd > max_drawdown_pct:
+                        max_drawdown_pct = dd
+
                 logger.info(
-                    "  %s done: %d trades | WR=%.1f%% | BE=%d",
+                    "  %s done: %d trades | WR=%.1f%% | BE=%d | Balance: $%.2f",
                     symbol,
                     result["trades_simulated"],
                     result["win_rate"] * 100,
                     result.get("breakevens", 0),
+                    current_balance,
                 )
             except Exception as exc:
                 logger.error("Backtest failed for %s: %s", symbol, exc, exc_info=True)
                 by_instrument[symbol] = {"error": str(exc)}
 
-        decisive = total_wins + total_losses
-        win_rate = (total_wins / decisive) if decisive > 0 else 0.0
+        decisive   = total_wins + total_losses
+        win_rate   = (total_wins / decisive) if decisive > 0 else 0.0
+        total_pnl  = round(current_balance - ACCOUNT_BALANCE, 2)
+        return_pct = round((current_balance - ACCOUNT_BALANCE) / ACCOUNT_BALANCE * 100, 1)
 
         summary = {
             "instruments_processed": len(self._instruments),
@@ -135,18 +149,37 @@ class Backtester:
             "breakevens":            total_breakevens,
             "win_rate":              round(win_rate, 4),
             "by_instrument":         by_instrument,
+            # Compounding stats
+            "starting_balance":  ACCOUNT_BALANCE,
+            "ending_balance":    round(current_balance, 2),
+            "total_pnl_usd":     total_pnl,
+            "total_return_pct":  return_pct,
+            "peak_balance":      round(peak_balance, 2),
+            "max_drawdown_pct":  round(max_drawdown_pct, 1),
+            "equity_curve":      equity_curve,
         }
 
         logger.info(
             "Backtest complete: %d trades | WR=%.1f%% | wins=%d losses=%d",
             total_trades, win_rate * 100, total_wins, total_losses,
         )
+        logger.info("=" * 60)
+        logger.info("COMPOUNDING SUMMARY ($%.2f starting balance)", ACCOUNT_BALANCE)
+        logger.info("  Ending balance : $%.2f", current_balance)
+        logger.info("  Total P&L      : $%.2f  (%+.1f%%)", total_pnl, return_pct)
+        logger.info("  Peak balance   : $%.2f", peak_balance)
+        logger.info("  Max drawdown   : %.1f%%", max_drawdown_pct)
+        logger.info("=" * 60)
         return summary
 
     # ── Per-instrument logic ──────────────────────────────────────────────────
 
-    def _backtest_instrument(self, symbol: str) -> dict:
+    def _backtest_instrument(self, symbol: str, starting_balance: float | None = None) -> dict:
         """Run walk-forward backtest for one instrument."""
+        from v2.settings import ACCOUNT_BALANCE
+        current_balance = starting_balance if starting_balance is not None else ACCOUNT_BALANCE
+        pnl_series: list[float] = []
+
         # Load maximum available history
         # We request more bars than needed to ensure MIN_LOOKBACK is always available
         bars_needed = int(self._days * 24) + MIN_LOOKBACK + MAX_HOLD_BARS + 100
@@ -237,9 +270,15 @@ class Backtester:
                 if outcome is None:
                     continue  # no clear outcome in window
 
-                # Write to journal as a historical trade
-                trade_id = self._write_backtest_trade(signal, outcome, window)
+                # Write to journal as a historical trade (use current compounded balance)
+                trade_id, pnl_usd = self._write_backtest_trade(
+                    signal, outcome, window, account_balance=current_balance
+                )
                 trades_simulated += 1
+
+                # Update compounded balance
+                current_balance = max(current_balance + pnl_usd, 0.01)
+                pnl_series.append(pnl_usd)
 
                 if outcome["exit_reason"] in ("TP1", "TP2"):
                     wins += 1
@@ -253,6 +292,7 @@ class Backtester:
 
         decisive = wins + losses
         win_rate = (wins / decisive) if decisive > 0 else 0.0
+        instrument_pnl = sum(pnl_series)
         return {
             "signals_evaluated": signals_evaluated,
             "trades_simulated":  trades_simulated,
@@ -260,6 +300,9 @@ class Backtester:
             "losses":            losses,
             "breakevens":        breakevens,
             "win_rate":          round(win_rate, 4),
+            "pnl_usd":           round(instrument_pnl, 2),
+            "pnl_series":        pnl_series,
+            "ending_balance":    round(current_balance, 2),
         }
 
     # ── Outcome simulation ────────────────────────────────────────────────────
@@ -336,14 +379,17 @@ class Backtester:
 
     def _write_backtest_trade(
         self,
-        signal:   dict,
-        outcome:  dict,
-        window:   pd.DataFrame,
-    ) -> str:
+        signal:          dict,
+        outcome:         dict,
+        window:          pd.DataFrame,
+        account_balance: float | None = None,
+    ) -> tuple[str, float]:
         """
         Write a completed backtest trade to the SQLite journal.
         Opens it as OPEN, then immediately closes it with outcome data.
         Saves ML features at entry time.
+
+        Returns (trade_id, pnl_usd) so caller can update compounded balance.
         """
         from v2.risk.position_sizer import calculate_lot_size, calculate_risk_usd
         from v2.instrument_config import price_to_pips
@@ -353,7 +399,8 @@ class Backtester:
         sl        = float(signal["stop_loss"])
         direction = signal["direction"]
 
-        lot_size = calculate_lot_size(symbol, entry, sl)
+        # Use the compounded account balance for position sizing
+        lot_size = calculate_lot_size(symbol, entry, sl, account_balance=account_balance)
         risk_usd = calculate_risk_usd(symbol, entry, sl, lot_size)
 
         # Compute PnL
@@ -428,7 +475,7 @@ class Backtester:
             exit_context= exit_context,
         )
 
-        return trade_id
+        return trade_id, pnl_usd
 
     # ── HTF slicing helper ────────────────────────────────────────────────────
 
