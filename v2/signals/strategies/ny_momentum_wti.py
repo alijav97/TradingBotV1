@@ -3,23 +3,23 @@ strategies/ny_momentum_wti.py — WTI Kill-Zone London Breakout strategy.
 
 Setup (the classic "kill-zone" model for crude oil):
   1. Detect the London session range (08:00–13:00 UTC = 12PM–5PM UAE)
-  2. At / after London close / NYMEX ramp-up (13:00 UTC = 5PM UAE), check for a
-     breakout of the London high (LONG) or London low (SHORT)
-  3. Wait for price to pull back and retest the broken level
-  4. Entry on retest; SL = opposite side of the London range
+  2. At / after NYMEX ramp-up (13:00 UTC = 5PM UAE), check for a breakout
+     of the London high (LONG) or London low (SHORT)
+  3. Two valid entry modes:
+       a) Retest entry  — price broke the level, pulled back close to it
+       b) Breakout entry — bar just broke the level (within same bar, no pull-back yet)
+  4. SL = opposite side of the London range
   5. TP1 = 2× SL distance (50% partial close, SL shifts to breakeven)
   6. TP2 = 5× SL distance (remaining 50% — 1:5 RR)
   7. Only trade 13:00–17:00 UTC (5PM–9PM UAE / 9AM–1PM EST)
 
-Why this works on WTI:
-  - NYMEX electronic market opens at 14:00 UTC, injecting directional liquidity
-  - London session creates a clear price range to trade against
-  - NY traders fade or extend the London direction — the retest entry catches both
-  - The 13:00–17:00 UTC window captures the most volatile + liquid WTI hours
-
-Note on the screenshot timezone claim ("9AM EST / 1PM UAE"):
-  9AM EST = 14:00 UTC = 18:00 UAE.  The actual overlap window used here is
-  13:00–17:00 UTC = 17:00–21:00 UAE, which is correct for NYMEX.
+Score components (max 10.0):
+  Session freshness      0.5–2.5
+  London range quality   0.0–2.0
+  Entry quality          0.0–2.0
+  HTF alignment          0.0–1.5
+  Volume spike           0.0–1.0
+  Closed beyond level    0.0–1.0
 """
 from __future__ import annotations
 
@@ -38,14 +38,15 @@ NY_START_UTC     = 13   # 1PM UTC = 5PM UAE  (start looking for breakouts)
 NY_END_UTC       = 17   # 5PM UTC = 9PM UAE  (stop taking new entries)
 
 # Quality filters
-MIN_LONDON_BARS  = 3    # need ≥ 3 London H1 bars to define a valid range
-MIN_RANGE_ATR    = 0.3  # London range must be ≥ 30% of ATR (skip flat/choppy days)
-RETEST_TOLERANCE = 0.5  # retest entry must be within 50% of ATR from the broken level
+MIN_LONDON_BARS   = 3    # need ≥ 3 London H1 bars to define a valid range
+MIN_RANGE_ATR_PCT = 0.25 # London range must be ≥ 25% of ATR (skip flat days)
+RETEST_TOLERANCE  = 0.8  # retest entry: price within 80% of ATR from broken level
+BREAKOUT_CHASE    = 1.5  # breakout entry: price no more than 1.5× ATR beyond level
 
 
 class NYMomentumWTIStrategy(StrategyBase):
     """
-    WTI-specific kill-zone strategy: London range breakout + retest at NYMEX open.
+    WTI kill-zone: London range breakout + retest (or fresh breakout) at NYMEX open.
     """
     name        = "ny_momentum_wti"
     instruments = ["WTI"]
@@ -73,7 +74,13 @@ class NYMomentumWTIStrategy(StrategyBase):
         current_hour = None
         current_date = None
         try:
-            last_time    = pd.to_datetime(df_h1["time"].iloc[-1], utc=True)
+            raw_time  = df_h1["time"].iloc[-1]
+            last_time = pd.to_datetime(raw_time)
+            # Handle both timezone-aware and naive timestamps
+            if last_time.tzinfo is None:
+                last_time = last_time.tz_localize("UTC")
+            else:
+                last_time = last_time.tz_convert("UTC")
             current_hour = last_time.hour
             current_date = last_time.date()
         except Exception:
@@ -89,11 +96,15 @@ class NYMomentumWTIStrategy(StrategyBase):
         london_bars = pd.DataFrame()
         if current_date is not None and "time" in df_h1.columns:
             try:
-                times = pd.to_datetime(df_h1["time"], utc=True)
-                mask  = (
-                    (times.dt.date == current_date) &
-                    (times.dt.hour >= LONDON_START_UTC) &
-                    (times.dt.hour <  LONDON_END_UTC)
+                raw_times = pd.to_datetime(df_h1["time"])
+                if raw_times.dt.tz is None:
+                    raw_times = raw_times.dt.tz_localize("UTC")
+                else:
+                    raw_times = raw_times.dt.tz_convert("UTC")
+                mask = (
+                    (raw_times.dt.date == current_date) &
+                    (raw_times.dt.hour >= LONDON_START_UTC) &
+                    (raw_times.dt.hour <  LONDON_END_UTC)
                 )
                 london_bars = df_h1[mask]
             except Exception:
@@ -114,10 +125,10 @@ class NYMomentumWTIStrategy(StrategyBase):
         if atr <= 0:
             return self._no_signal(symbol, direction, "ATR calculation failed")
 
-        if london_range < atr * MIN_RANGE_ATR:
+        if london_range < atr * MIN_RANGE_ATR_PCT:
             return self._no_signal(
                 symbol, direction,
-                f"London range too tight ({london_range:.3f} < {atr * MIN_RANGE_ATR:.3f}) — choppy session",
+                f"London range too tight ({london_range:.3f} < {atr * MIN_RANGE_ATR_PCT:.3f}) — flat session",
             )
 
         # ── Breakout check ────────────────────────────────────────────────────
@@ -142,20 +153,22 @@ class NYMomentumWTIStrategy(StrategyBase):
             breakout_level = london_low
             sl             = london_high
 
-        # ── Retest quality ────────────────────────────────────────────────────
-        dist_to_level = abs(price - breakout_level)
-        retest_window = atr * RETEST_TOLERANCE
-
-        if dist_to_level > retest_window:
-            return self._no_signal(
-                symbol, direction,
-                f"Waiting for retest — price {price:.3f} is {dist_to_level:.3f} from "
-                f"breakout level {breakout_level:.3f} (window={retest_window:.3f})",
-            )
-
         sl_dist = abs(price - sl)
         if sl_dist <= 0:
             return self._no_signal(symbol, direction, "Zero SL distance — invalid levels")
+
+        # ── Entry mode: retest OR fresh breakout ──────────────────────────────
+        dist_to_level = abs(price - breakout_level)
+
+        is_retest   = dist_to_level <= atr * RETEST_TOLERANCE
+        is_breakout = dist_to_level <= atr * BREAKOUT_CHASE
+
+        if not is_breakout:
+            return self._no_signal(
+                symbol, direction,
+                f"Price {price:.3f} has run too far from {breakout_level:.3f} "
+                f"(dist={dist_to_level:.3f} > {atr * BREAKOUT_CHASE:.3f}) — chasing",
+            )
 
         # ── Entry, SL, TP ─────────────────────────────────────────────────────
         entry    = price
@@ -165,7 +178,7 @@ class NYMomentumWTIStrategy(StrategyBase):
         htf_ok, htf_reason = self._htf_bias(df_h4, df_d1, direction)
 
         # ── Volume spike confirmation ─────────────────────────────────────────
-        vol_ok = True
+        vol_ok    = True
         vol_ratio = 1.0
         if "volume" in df_h1.columns:
             try:
@@ -176,23 +189,26 @@ class NYMomentumWTIStrategy(StrategyBase):
             except Exception:
                 vol_ok = True
 
-        # ── Closed-beyond-level (price closed on the breakout side) ──────────
+        # ── Closed beyond level (bar closed on the breakout side) ─────────────
         closed_beyond = (is_long and price > london_high) or (not is_long and price < london_low)
 
         # ── Score ─────────────────────────────────────────────────────────────
         score = 0.0
 
-        # 1. Session timing: earlier in the NY window = fresher breakout
-        hours_into_session = (current_hour - NY_START_UTC) if current_hour is not None else 2
-        score += 2.5 if hours_into_session <= 1 else (1.5 if hours_into_session <= 2 else 0.5)
+        # 1. Session freshness (first 2 hours of NY window = best)
+        hours_into = (current_hour - NY_START_UTC) if current_hour is not None else 2
+        score += 2.5 if hours_into == 0 else (1.5 if hours_into == 1 else 0.5)
 
-        # 2. London range quality vs ATR
+        # 2. London range quality (well-defined range = higher confidence)
         range_pct = london_range / atr
         score += min(range_pct * 2.0, 2.0)
 
-        # 3. Retest quality (0–2): tighter retest = better entry
-        retest_quality = max(1.0 - (dist_to_level / retest_window), 0.0)
-        score += retest_quality * 2.0
+        # 3. Entry quality
+        if is_retest:
+            retest_q = max(1.0 - (dist_to_level / (atr * RETEST_TOLERANCE)), 0.0)
+            score += 1.0 + retest_q * 1.0   # 1.0–2.0 for a retest
+        else:
+            score += 0.5                      # fresh breakout, no pull-back yet
 
         # 4. HTF alignment
         score += 1.5 if htf_ok else 0.0
@@ -200,16 +216,16 @@ class NYMomentumWTIStrategy(StrategyBase):
         # 5. Volume spike
         score += 1.0 if vol_ok else 0.0
 
-        # 6. Price closed beyond level (breakout conviction)
+        # 6. Bar closed beyond level (conviction)
         score += 1.0 if closed_beyond else 0.0
 
+        mode = "retest" if is_retest else "fresh-breakout"
         reasons = [
             f"London range {london_low:.3f}–{london_high:.3f}  "
-            f"(range={london_range:.3f}  ATR={atr:.3f}  bars={len(london_bars)})",
+            f"(range={london_range:.3f}, ATR={atr:.3f}, {len(london_bars)} bars)",
             f"{'Bullish' if is_long else 'Bearish'} breakout of London "
-            f"{'high' if is_long else 'low'} at {breakout_level:.3f}",
-            f"Retest quality {retest_quality*100:.0f}%  (dist={dist_to_level:.3f})",
-            f"Volume {'spike ×{:.1f}'.format(vol_ratio) if vol_ok else 'weak (×{:.1f})'.format(vol_ratio)}",
+            f"{'high' if is_long else 'low'} at {breakout_level:.3f}  [{mode}]",
+            f"Volume {'spike ×{:.1f}'.format(vol_ratio) if vol_ok else 'weak ×{:.1f}'.format(vol_ratio)}",
             htf_reason,
         ]
 
@@ -230,7 +246,7 @@ class NYMomentumWTIStrategy(StrategyBase):
                 "london_range":      round(london_range, 3),
                 "breakout_level":    round(breakout_level, 3),
                 "dist_to_level":     round(dist_to_level, 3),
-                "retest_quality":    round(retest_quality, 2),
+                "entry_mode":        mode,
                 "closed_beyond":     closed_beyond,
                 "vol_ratio":         round(vol_ratio, 2),
                 "vol_ok":            vol_ok,

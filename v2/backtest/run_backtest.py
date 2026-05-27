@@ -27,6 +27,7 @@ import argparse
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ── Logging setup ──────────────────────────────────────────────────────────────
@@ -53,7 +54,27 @@ def main() -> None:
                         help="Skip ML training after backtest")
     parser.add_argument("--clear",      action="store_true",
                         help="Delete existing backtest trades before running")
+    parser.add_argument("--from", dest="start_date", default=None,
+                        help="Backtest start date YYYY-MM-DD  (e.g. 2024-10-01). "
+                             "Overrides --days lower bound.")
+    parser.add_argument("--to",   dest="end_date",   default=None,
+                        help="Backtest end date YYYY-MM-DD  (default: today). "
+                             "Use with --from to test a specific quarter.")
     args = parser.parse_args()
+
+    # ── Parse date range ──────────────────────────────────────────────────────
+    start_date: datetime | None = None
+    end_date:   datetime | None = None
+    try:
+        if args.start_date:
+            start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if args.end_date:
+            end_date   = datetime.strptime(args.end_date,   "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        elif args.start_date:
+            end_date   = datetime.now(timezone.utc)   # default end = today
+    except ValueError as exc:
+        logger.error("Invalid date format: %s — use YYYY-MM-DD", exc)
+        sys.exit(1)
 
     # ── Load settings + dependencies ──────────────────────────────────────────
 
@@ -145,11 +166,18 @@ def main() -> None:
 
     t0 = time.time()
 
+    if start_date:
+        logger.info(" Date range      : %s  →  %s",
+                    start_date.strftime("%Y-%m-%d"),
+                    end_date.strftime("%Y-%m-%d") if end_date else "today")
+
     backtester = Backtester(
         journal     = journal,
         feed        = feed,
         days        = args.days,
         instruments = available,
+        start_date  = start_date,
+        end_date    = end_date,
     )
 
     summary = backtester.run()

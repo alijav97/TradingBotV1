@@ -66,13 +66,23 @@ class Backtester:
         feed:        "DataFeed",
         days:        int = 180,
         instruments: list[str] | None = None,
+        start_date:  "datetime | None" = None,
+        end_date:    "datetime | None" = None,
     ) -> None:
         self._journal     = journal
         self._feed        = feed
-        self._days        = days
         self._instruments = instruments or list(ALL_SYMBOLS)
         self._engine      = ConfluenceEngine()
         self._fe          = FeatureEngineer(journal=journal)
+        self._start_date  = start_date
+        self._end_date    = end_date
+
+        # Auto-expand days when a date range is provided so enough bars are fetched
+        if start_date is not None:
+            ref = end_date if end_date is not None else datetime.now(timezone.utc)
+            self._days = max(days, (ref - start_date).days + 30)
+        else:
+            self._days = days
 
     # ── Public entry point ────────────────────────────────────────────────────
 
@@ -216,8 +226,34 @@ class Backtester:
         # Leave MAX_HOLD_BARS at the end so every trade has room to resolve
         end_bar = len(df_full) - MAX_HOLD_BARS - 1
 
-        total_bars = end_bar - MIN_LOOKBACK
-        for bar_idx in range(MIN_LOOKBACK, end_bar, SCAN_STEP):
+        # ── Date-range window restriction ─────────────────────────────────────
+        range_start_idx = MIN_LOOKBACK
+        range_end_idx   = end_bar
+
+        if (self._start_date is not None or self._end_date is not None) and "time" in df_full.columns:
+            try:
+                times = pd.to_datetime(df_full["time"], utc=True)
+                if self._start_date is not None:
+                    sd = pd.Timestamp(self._start_date)
+                    if sd.tzinfo is None:
+                        sd = sd.tz_localize("UTC")
+                    idxs = df_full.index[times >= sd].tolist()
+                    if idxs:
+                        range_start_idx = max(int(idxs[0]), MIN_LOOKBACK)
+                        logger.info("%s: date range from %s → bar %d", symbol, self._start_date.date(), range_start_idx)
+                if self._end_date is not None:
+                    ed = pd.Timestamp(self._end_date)
+                    if ed.tzinfo is None:
+                        ed = ed.tz_localize("UTC")
+                    idxs = df_full.index[times <= ed].tolist()
+                    if idxs:
+                        range_end_idx = min(int(idxs[-1]) - MAX_HOLD_BARS, end_bar)
+                        logger.info("%s: date range to   %s → bar %d", symbol, self._end_date.date(), range_end_idx)
+            except Exception as exc:
+                logger.warning("%s: date-range filter failed (%s) — using full range", symbol, exc)
+
+        total_bars = range_end_idx - range_start_idx
+        for bar_idx in range(range_start_idx, range_end_idx, SCAN_STEP):
             # Progress log every 200 bars
             bars_done = bar_idx - MIN_LOOKBACK
             if bars_done > 0 and bars_done % 200 == 0:

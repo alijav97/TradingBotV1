@@ -66,11 +66,8 @@ _INSTRUMENT_STRATEGIES: dict[str, list[StrategyBase]] = {
         NYMomentumStrategy(),
     ],
     "WTI": [
-        NYMomentumWTIStrategy(),   # Primary — London kill-zone breakout + retest
-        NYMomentumStrategy(),      # Fallback — generic NY momentum (ADX + supertrend)
-        FVGFillStrategy(),
-        EMATrendStrategy(),
-        SqueezeBreakoutStrategy(),
+        NYMomentumWTIStrategy(),   # Only strategy — London kill-zone breakout + retest
+        FVGFillStrategy(),         # Fallback for non-NY-session setups
     ],
     "NAS100": [
         NYMomentumStrategy(),
