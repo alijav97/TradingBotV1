@@ -7,8 +7,8 @@ Setup (the classic "kill-zone" model for crude oil):
      breakout of the London high (LONG) or London low (SHORT)
   3. Wait for price to pull back and retest the broken level
   4. Entry on retest; SL = opposite side of the London range
-  5. TP1 = 2× SL distance (partial close, SL to breakeven)
-  6. TP2 = 3× SL distance
+  5. TP1 = 2× SL distance (50% partial close, SL shifts to breakeven)
+  6. TP2 = 5× SL distance (remaining 50% — 1:5 RR)
   7. Only trade 13:00–17:00 UTC (5PM–9PM UAE / 9AM–1PM EST)
 
 Why this works on WTI:
@@ -159,7 +159,7 @@ class NYMomentumWTIStrategy(StrategyBase):
 
         # ── Entry, SL, TP ─────────────────────────────────────────────────────
         entry    = price
-        tp1, tp2 = self._calc_tps(entry, sl, direction, rr1=2.0, rr2=3.0)
+        tp1, tp2 = self._calc_tps(entry, sl, direction, rr1=2.0, rr2=5.0)
 
         # ── HTF bias ──────────────────────────────────────────────────────────
         htf_ok, htf_reason = self._htf_bias(df_h4, df_d1, direction)
