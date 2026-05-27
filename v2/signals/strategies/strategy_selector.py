@@ -7,7 +7,7 @@ Returns the highest-scoring signal that meets the per-instrument score threshold
 Instrument strategy priority:
   XAUUSD  → London Breakout, ICT Gold, Liq Sweep, SMC OB, FVG Fill
   GBPJPY  → London Breakout, SMC OB, Liq Sweep, EMA Trend, FVG Fill, NY Momentum
-  WTI     → NY Momentum, FVG Fill, EMA Trend, Squeeze
+  WTI     → NY Momentum WTI (kill-zone), NY Momentum, FVG Fill, EMA Trend, Squeeze
   NAS100  → NY Momentum, Squeeze, EMA Trend, FVG Fill
   BTCUSDT → Crypto Cipher, Liq Sweep, FVG Fill, EMA Trend
   ETHUSDT → Crypto Cipher, Liq Sweep, FVG Fill, EMA Trend
@@ -29,6 +29,7 @@ from v2.signals.strategies.ema_trend       import EMATrendStrategy
 from v2.signals.strategies.ny_momentum     import NYMomentumStrategy
 from v2.signals.strategies.squeeze_breakout import SqueezeBreakoutStrategy
 from v2.signals.strategies.crypto_cipher   import CryptoCipherStrategy
+from v2.signals.strategies.ny_momentum_wti import NYMomentumWTIStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,8 @@ _INSTRUMENT_STRATEGIES: dict[str, list[StrategyBase]] = {
         NYMomentumStrategy(),
     ],
     "WTI": [
-        NYMomentumStrategy(),
+        NYMomentumWTIStrategy(),   # Primary — London kill-zone breakout + retest
+        NYMomentumStrategy(),      # Fallback — generic NY momentum (ADX + supertrend)
         FVGFillStrategy(),
         EMATrendStrategy(),
         SqueezeBreakoutStrategy(),
