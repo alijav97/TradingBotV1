@@ -95,16 +95,16 @@ class Backtester:
         total_breakevens = 0
         by_instrument:   dict = {}
 
-        # Compounding: balance updates after every trade across all instruments
-        current_balance  = ACCOUNT_BALANCE
-        peak_balance     = ACCOUNT_BALANCE
+        # Each instrument gets its own fresh $500 — independent compounding.
+        # The overall summary shows combined P&L across all instruments.
+        total_pnl_usd    = 0.0
         max_drawdown_pct = 0.0
-        equity_curve: list[float] = [ACCOUNT_BALANCE]
 
         for symbol in self._instruments:
-            logger.info("Backtesting %s ... (current balance: $%.2f)", symbol, current_balance)
+            logger.info("Backtesting %s ... (starting balance: $%.2f)", symbol, ACCOUNT_BALANCE)
             try:
-                result = self._backtest_instrument(symbol, starting_balance=current_balance)
+                # Always start each instrument fresh from ACCOUNT_BALANCE
+                result = self._backtest_instrument(symbol, starting_balance=ACCOUNT_BALANCE)
                 by_instrument[symbol] = result
                 total_signals    += result["signals_evaluated"]
                 total_trades     += result["trades_simulated"]
@@ -112,33 +112,39 @@ class Backtester:
                 total_losses     += result["losses"]
                 total_breakevens += result.get("breakevens", 0)
 
-                # Update running balance and track drawdown
+                # Track per-instrument drawdown
+                inst_peak = ACCOUNT_BALANCE
+                inst_bal  = ACCOUNT_BALANCE
                 for pnl in result.get("pnl_series", []):
-                    current_balance += pnl
-                    current_balance  = max(current_balance, 0.01)   # floor at 1 cent
-                    equity_curve.append(round(current_balance, 2))
-                    if current_balance > peak_balance:
-                        peak_balance = current_balance
-                    dd = (peak_balance - current_balance) / peak_balance * 100
+                    inst_bal = max(inst_bal + pnl, 0.01)
+                    if inst_bal > inst_peak:
+                        inst_peak = inst_bal
+                    dd = (inst_peak - inst_bal) / inst_peak * 100
                     if dd > max_drawdown_pct:
                         max_drawdown_pct = dd
 
+                inst_ending = result.get("ending_balance", ACCOUNT_BALANCE)
+                inst_pnl    = round(inst_ending - ACCOUNT_BALANCE, 2)
+                total_pnl_usd += inst_pnl
+
                 logger.info(
-                    "  %s done: %d trades | WR=%.1f%% | BE=%d | Balance: $%.2f",
+                    "  %s done: %d trades | WR=%.1f%% | BE=%d | $%.2f → $%.2f (%+.1f%%)",
                     symbol,
                     result["trades_simulated"],
                     result["win_rate"] * 100,
                     result.get("breakevens", 0),
-                    current_balance,
+                    ACCOUNT_BALANCE,
+                    inst_ending,
+                    (inst_pnl / ACCOUNT_BALANCE * 100),
                 )
             except Exception as exc:
                 logger.error("Backtest failed for %s: %s", symbol, exc, exc_info=True)
                 by_instrument[symbol] = {"error": str(exc)}
 
-        decisive   = total_wins + total_losses
-        win_rate   = (total_wins / decisive) if decisive > 0 else 0.0
-        total_pnl  = round(current_balance - ACCOUNT_BALANCE, 2)
-        return_pct = round((current_balance - ACCOUNT_BALANCE) / ACCOUNT_BALANCE * 100, 1)
+        decisive       = total_wins + total_losses
+        win_rate       = (total_wins / decisive) if decisive > 0 else 0.0
+        total_invested = ACCOUNT_BALANCE * len([s for s in by_instrument if "error" not in by_instrument[s]])
+        return_pct     = round(total_pnl_usd / total_invested * 100, 1) if total_invested > 0 else 0.0
 
         summary = {
             "instruments_processed": len(self._instruments),
@@ -149,12 +155,12 @@ class Backtester:
             "breakevens":            total_breakevens,
             "win_rate":              round(win_rate, 4),
             "by_instrument":         by_instrument,
-            # Compounding stats
+            # Compounding stats — each instrument independent, $500 each
             "starting_balance":  ACCOUNT_BALANCE,
-            "ending_balance":    round(current_balance, 2),
-            "total_pnl_usd":     total_pnl,
+            "ending_balance":    round(ACCOUNT_BALANCE + total_pnl_usd, 2),
+            "total_pnl_usd":     round(total_pnl_usd, 2),
             "total_return_pct":  return_pct,
-            "peak_balance":      round(peak_balance, 2),
+            "peak_balance":      round(ACCOUNT_BALANCE + total_pnl_usd, 2),
             "max_drawdown_pct":  round(max_drawdown_pct, 1),
             "equity_curve":      equity_curve,
         }
@@ -164,11 +170,10 @@ class Backtester:
             total_trades, win_rate * 100, total_wins, total_losses,
         )
         logger.info("=" * 60)
-        logger.info("COMPOUNDING SUMMARY ($%.2f starting balance)", ACCOUNT_BALANCE)
-        logger.info("  Ending balance : $%.2f", current_balance)
-        logger.info("  Total P&L      : $%.2f  (%+.1f%%)", total_pnl, return_pct)
-        logger.info("  Peak balance   : $%.2f", peak_balance)
-        logger.info("  Max drawdown   : %.1f%%", max_drawdown_pct)
+        logger.info("COMPOUNDING SUMMARY  ($%.2f per instrument, independent)", ACCOUNT_BALANCE)
+        logger.info("  Total P&L      : $%+.2f  (%+.1f%% on $%.2f deployed)",
+                    total_pnl_usd, return_pct, total_invested)
+        logger.info("  Max drawdown   : %.1f%%  (worst single instrument)", max_drawdown_pct)
         logger.info("=" * 60)
         return summary
 
