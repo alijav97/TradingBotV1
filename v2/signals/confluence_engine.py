@@ -26,7 +26,8 @@ from v2.signals.strategies.strategy_selector import StrategySelector
 logger = logging.getLogger(__name__)
 
 # Minimum score to generate a tradeable signal
-MIN_SCORE = 4.0
+# Matches entry_checklist.py MIN_CONFLUENCE = 7.0 so fallback and checklist are consistent
+MIN_SCORE = 7.0
 
 _selector = StrategySelector()
 
@@ -113,6 +114,17 @@ class ConfluenceEngine:
             logger.error("StrategySelector error for %s %s: %s", symbol, direction, exc, exc_info=True)
 
         # ── FALLBACK PATH: 12-factor generic scorer ───────────────────────────
+        # For instruments with dedicated strategies, only use the strategy path.
+        # The generic scorer does not understand instrument-specific nuances and
+        # produces lower-quality signals that drag down overall WR.
+        from v2.signals.strategies.strategy_selector import _INSTRUMENT_MIN_SCORE
+        _STRATEGY_ONLY = {"XAUUSD", "BTCUSDT", "ETHUSDT"}
+        if symbol.upper() in _STRATEGY_ONLY:
+            return {"symbol": symbol, "direction": direction, "score": 0.0,
+                    "max_score": 10, "signal": False, "factors": {}, "reasons": [],
+                    "entry_price": 0.0, "stop_loss": 0.0, "tp1_price": 0.0,
+                    "tp2_price": 0.0, "strategy": "", "timeframe": "H1",
+                    "signal_path": "strategy_only_blocked"}
         is_long = direction.lower() in ("long", "buy")
         factors: dict[str, dict] = {}
         total_score = 0.0

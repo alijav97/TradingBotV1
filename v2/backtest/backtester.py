@@ -325,54 +325,67 @@ class Backtester:
         if future.empty:
             return None
 
-        is_long   = direction.lower() in ("long", "buy")
-        tp1_hit   = False
+        is_long      = direction.lower() in ("long", "buy")
+        tp1_hit      = False
+        tp1_actual   = 0.0   # actual TP1 exit price (for partial close P&L)
 
         for bar_num, (_, bar) in enumerate(future.iterrows()):
             bar_high = float(bar["high"])
             bar_low  = float(bar["low"])
 
             if is_long:
-                # Check SL first (conservative — assume worst fill within bar)
                 if bar_low <= sl:
                     if tp1_hit:
-                        # SL hit after TP1 — exit at BE (entry) or SL whichever is better
                         exit_p = max(sl, entry)
-                        return self._outcome(exit_p, "SL_AFTER_TP1", entry, bar_num + 1)
+                        return self._outcome(exit_p, "SL_AFTER_TP1", entry, bar_num + 1,
+                                             tp1_hit=True, tp1_price=tp1_actual)
                     return self._outcome(sl, "SL", entry, bar_num + 1)
 
                 if not tp1_hit and bar_high >= tp1:
-                    tp1_hit = True
-                    # After TP1, SL moves to BE — update sl to entry
-                    sl = entry
+                    tp1_hit    = True
+                    tp1_actual = tp1      # record TP1 fill price
+                    sl         = entry   # SL moves to BE
 
                 if tp1_hit and bar_high >= tp2:
-                    return self._outcome(tp2, "TP2", entry, bar_num + 1)
+                    return self._outcome(tp2, "TP2", entry, bar_num + 1,
+                                         tp1_hit=True, tp1_price=tp1_actual)
 
             else:  # short
                 if bar_high >= sl:
                     if tp1_hit:
                         exit_p = min(sl, entry)
-                        return self._outcome(exit_p, "SL_AFTER_TP1", entry, bar_num + 1)
+                        return self._outcome(exit_p, "SL_AFTER_TP1", entry, bar_num + 1,
+                                             tp1_hit=True, tp1_price=tp1_actual)
                     return self._outcome(sl, "SL", entry, bar_num + 1)
 
                 if not tp1_hit and bar_low <= tp1:
-                    tp1_hit = True
-                    sl = entry
+                    tp1_hit    = True
+                    tp1_actual = tp1
+                    sl         = entry
 
                 if tp1_hit and bar_low <= tp2:
-                    return self._outcome(tp2, "TP2", entry, bar_num + 1)
+                    return self._outcome(tp2, "TP2", entry, bar_num + 1,
+                                         tp1_hit=True, tp1_price=tp1_actual)
 
-        # Time exit — MAX_HOLD reached
         last_price = float(future["close"].iloc[-1])
-        return self._outcome(last_price, "MAX_HOLD", entry, len(future))
+        return self._outcome(last_price, "MAX_HOLD", entry, len(future),
+                             tp1_hit=tp1_hit, tp1_price=tp1_actual)
 
     @staticmethod
-    def _outcome(exit_price: float, reason: str, entry: float, bars: int) -> dict:
+    def _outcome(
+        exit_price: float,
+        reason: str,
+        entry: float,
+        bars: int,
+        tp1_hit: bool = False,
+        tp1_price: float = 0.0,
+    ) -> dict:
         return {
             "exit_price":  exit_price,
             "exit_reason": reason,
             "bars_held":   bars,
+            "tp1_hit":     tp1_hit,
+            "tp1_price":   tp1_price,
         }
 
     # ── Journal write ─────────────────────────────────────────────────────────
@@ -399,21 +412,43 @@ class Backtester:
         sl        = float(signal["stop_loss"])
         direction = signal["direction"]
 
-        # Use the compounded account balance for position sizing
-        lot_size = calculate_lot_size(symbol, entry, sl, account_balance=account_balance)
+        from v2.settings import ACCOUNT_BALANCE
+
+        # Cap effective balance at 20× starting balance to prevent compounding overflow.
+        # In real trading, margin constraints limit position growth beyond this.
+        starting_balance = ACCOUNT_BALANCE
+        effective_balance = min(account_balance or starting_balance,
+                                starting_balance * 20)
+
+        lot_size = calculate_lot_size(symbol, entry, sl, account_balance=effective_balance)
         risk_usd = calculate_risk_usd(symbol, entry, sl, lot_size)
 
-        # Compute PnL
+        # Compute PnL — with 50% partial close at TP1
         exit_price  = float(outcome["exit_price"])
         is_long     = direction.lower() in ("long", "buy")
-        price_diff  = (exit_price - entry) if is_long else (entry - exit_price)
+        tp1_was_hit = outcome.get("tp1_hit", False)
+        tp1_price   = float(outcome.get("tp1_price") or 0)
+
         try:
-            cfg      = get_instrument(symbol)
-            pips     = price_diff / cfg.pip_size
-            pnl_usd  = pips * cfg.pip_value_usd * lot_size
+            cfg = get_instrument(symbol)
+
+            if tp1_was_hit and tp1_price > 0:
+                # 50% closed at TP1, 50% closed at final exit
+                tp1_diff   = (tp1_price - entry) if is_long else (entry - tp1_price)
+                final_diff = (exit_price - entry) if is_long else (entry - exit_price)
+                pnl_tp1    = (tp1_diff   / cfg.pip_size) * cfg.pip_value_usd * lot_size * 0.5
+                pnl_final  = (final_diff / cfg.pip_size) * cfg.pip_value_usd * lot_size * 0.5
+                pnl_usd    = pnl_tp1 + pnl_final
+                pips       = ((tp1_diff + final_diff) / 2) / cfg.pip_size
+            else:
+                price_diff = (exit_price - entry) if is_long else (entry - exit_price)
+                pips       = price_diff / cfg.pip_size
+                pnl_usd    = pips * cfg.pip_value_usd * lot_size
+
         except Exception:
-            pips    = price_diff * 100
-            pnl_usd = price_diff * lot_size * 1000
+            price_diff = (exit_price - entry) if is_long else (entry - exit_price)
+            pips       = price_diff / 0.01 if price_diff != 0 else 0
+            pnl_usd    = risk_usd * (price_diff / abs(entry - sl)) if abs(entry - sl) > 0 else 0
 
         pnl_usd = round(pnl_usd, 2)
         pips    = round(pips, 1)
