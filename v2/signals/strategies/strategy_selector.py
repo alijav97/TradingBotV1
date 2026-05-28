@@ -66,8 +66,9 @@ _INSTRUMENT_STRATEGIES: dict[str, list[StrategyBase]] = {
         NYMomentumStrategy(),
     ],
     "WTI": [
-        NYMomentumWTIStrategy(),   # Only strategy — London kill-zone breakout + retest
-        FVGFillStrategy(),         # Fallback for non-NY-session setups
+        NYMomentumWTIStrategy(),   # ONLY strategy — London kill-zone breakout + retest
+        # FVG Fill removed: it outscores the kill-zone strategy and then fails R:R.
+        # WTI is purely a kill-zone instrument — no off-session fallback.
     ],
     "NAS100": [
         NYMomentumStrategy(),
