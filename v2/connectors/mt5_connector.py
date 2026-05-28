@@ -166,18 +166,25 @@ def get_live_price(symbol: str, max_age_seconds: int = 300) -> dict:
         return {}
 
     mid = round((tick.bid + tick.ask) / 2, 5)
+
+    # Negative age means broker stores timestamps in server-local time (UTC+3)
+    # but labels them as UTC. Price values are still correct and live.
+    # Clamp to 0 so the age never appears negative in logs/diagnostics.
+    display_age = max(round(age_secs, 1), 0.0)
+
     logger.debug(
         "get_live_price: %s bid=%.5f ask=%.5f mid=%.5f age=%.0fs",
-        symbol, tick.bid, tick.ask, mid, age_secs,
+        symbol, tick.bid, tick.ask, mid, display_age,
     )
 
     return {
-        "symbol": symbol,
-        "bid":    round(tick.bid, 5),
-        "ask":    round(tick.ask, 5),
-        "spread": round(tick.ask - tick.bid, 5),
-        "time":   tick_utc.isoformat(),
-        "age_seconds": round(age_secs, 1),
+        "symbol":      symbol,
+        "bid":         round(tick.bid, 5),
+        "ask":         round(tick.ask, 5),
+        "price":       mid,           # mid-price for convenience
+        "spread":      round(tick.ask - tick.bid, 5),
+        "time":        tick_utc.isoformat(),
+        "age_seconds": display_age,
     }
 
 

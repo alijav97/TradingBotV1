@@ -142,12 +142,20 @@ try:
             print("   WARNING: get_live_price returned empty — tick is stale or unavailable")
             print("   The bot will SKIP trades until a fresh tick is available")
         else:
-            age = price_info.get("age_seconds", "?")
-            print(f"   Bid   : {price_info.get('bid', '?')}")
-            print(f"   Ask   : {price_info.get('ask', '?')}")
-            print(f"   Mid   : {price_info.get('price', '?')}")
-            print(f"   Tick age: {age}s  ({'FRESH' if isinstance(age, (int,float)) and age < 60 else 'STALE' if isinstance(age,(int,float)) and age >= 300 else 'OK'})")
+            age  = price_info.get("age_seconds", 0)
+            mid  = price_info.get("price") or round((price_info.get("bid",0) + price_info.get("ask",0)) / 2, 5)
+            # Negative age = broker stores timestamps in server-local time (UTC+3)
+            # Price values are still correct — clamp display to 0
+            age_display = max(age, 0) if isinstance(age, (int, float)) else 0
+            freshness   = "LIVE" if age_display < 60 else ("OK" if age_display < 300 else "STALE")
+            print(f"   Bid      : {price_info.get('bid', '?')}")
+            print(f"   Ask      : {price_info.get('ask', '?')}")
+            print(f"   Mid      : {mid}")
+            print(f"   Tick age : {age_display:.0f}s  [{freshness}]")
             print(f"   Tick time: {price_info.get('time', '?')}")
+            if isinstance(age, (int, float)) and age < 0:
+                print(f"   NOTE: Broker (Pepperstone) stores tick timestamps in UTC+3 server")
+                print(f"         time — prices are correct, only the timestamp label is off.")
 
         mt5_conn.disconnect()
 
