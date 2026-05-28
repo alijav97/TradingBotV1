@@ -247,8 +247,12 @@ class BotScheduler:
             return
 
         # ── ML confidence gate ─────────────────────────────────────────────────
+        # Threshold lowered to 0.25 during paper-trading phase.
+        # The ML is trained on limited backtest data and should not block paper
+        # trades — we need live trade data to improve the model.
+        # Once we have 50+ live paper trades, raise this back to 0.40.
         ml_confidence = self._get_ml_confidence(signal, df)
-        if ml_confidence < 0.40:
+        if ml_confidence < 0.25:
             logger.info(
                 "Signal rejected by ML: %s %s confidence=%.2f",
                 symbol, direction, ml_confidence,
