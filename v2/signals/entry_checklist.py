@@ -76,12 +76,28 @@ def validate_entry(signal: dict, df: pd.DataFrame | None = None, skip_news: bool
         failed_at = "Trend Alignment"
 
     # ── CHECK 2: Minimum Confluence Score ─────────────────────────────────────
-    c2_passed = score >= MIN_CONFLUENCE
-    checks["Minimum Confluence"] = {
-        "passed": c2_passed,
-        "reason": f"Score {score:.1f}/12 >= {MIN_CONFLUENCE}" if c2_passed
-                  else f"Score {score:.1f}/12 < {MIN_CONFLUENCE} required",
+    # Specialised strategies (kill-zone, crypto cipher, etc.) have their own
+    # internal quality gates and use a score out of 10, not 12.
+    # They bypass the generic confluence minimum — the strategy selector's
+    # per-instrument threshold is already the quality gate for these strategies.
+    _SPECIALISED_STRATEGIES = {
+        "ny_momentum_wti",      # WTI kill-zone — London range + retest
+        "crypto_cipher",        # BTC/ETH cipher model
+        "ict_gold",             # ICT Gold model
+        "london_breakout",      # London range breakout
     }
+    strategy_name = str(signal.get("strategy", "")).lower()
+    is_specialised = any(s in strategy_name for s in _SPECIALISED_STRATEGIES)
+
+    if is_specialised:
+        c2_passed = True
+        c2_reason = f"Specialised strategy '{strategy_name}' — confluence gate bypassed (uses own scoring)"
+    else:
+        c2_passed = score >= MIN_CONFLUENCE
+        c2_reason = (f"Score {score:.1f}/12 >= {MIN_CONFLUENCE}"
+                     if c2_passed else f"Score {score:.1f}/12 < {MIN_CONFLUENCE} required")
+
+    checks["Minimum Confluence"] = {"passed": c2_passed, "reason": c2_reason}
     if not c2_passed and failed_at is None:
         failed_at = "Minimum Confluence"
 
