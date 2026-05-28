@@ -29,11 +29,13 @@ utc_min   = now_utc.minute
 # Each MT5 Python API call (copy_rates_from_pos, symbol_info_tick,
 # symbol_select) counts as 1 message.
 
-# H1 scan (every 2 min, but ONLY 12:30-17:30 UTC = 5 hours with buffer)
+# H1 scan (every 2 min, 24 hours/day — continuous so all session data is
+# always current. Strategy's own time gate rejects signals outside 13-17 UTC
+# but data is fetched fresh regardless so London range bars are always ready.)
 # Per scan: get_ohlcv(H1) + get_ohlcv(H4) + get_ohlcv(D1) + get_price
 #           + symbol_select × 4 = 8 calls per scan cycle
 H1_SCAN_INTERVAL_MIN   = 2
-H1_ACTIVE_HOURS        = 5.0        # 12:30–17:30 UTC window
+H1_ACTIVE_HOURS        = 24.0       # runs all day
 H1_SCANS_PER_ACTIVE_HR = 60 / H1_SCAN_INTERVAL_MIN
 H1_CALLS_PER_SCAN      = 8          # 4 data + 4 symbol_select
 h1_daily               = int(H1_SCANS_PER_ACTIVE_HR * H1_ACTIVE_HOURS * H1_CALLS_PER_SCAN)
@@ -53,7 +55,7 @@ h4_daily          = H4_SCANS_PER_DAY * H4_CALLS_PER_SCAN
 print()
 print(f"{'Job':<30} {'Freq':<18} {'Calls/day'}")
 print("-" * 62)
-print(f"{'H1 scan (kill-zone only)':<30} {'every 2min/12:30-17:30':18} {h1_daily:>6}")
+print(f"{'H1 scan (continuous)':<30} {'every 2min / 24hrs':18} {h1_daily:>6}")
 print(f"{'H4 scan':<30} {'6x/day':18} {h4_daily:>6}")
 print(f"{'Monitor (trade OPEN)':<30} {'every 60s all day':18} {monitor_daily_open:>6}")
 print(f"{'Monitor (no trade)':<30} {'every 60s all day':18} {monitor_daily_none:>6}")
@@ -84,10 +86,9 @@ kz_close_min = 17 * 60 + 30
 now_min      = utc_hour * 60 + utc_min
 in_active    = kz_open_min <= now_min <= kz_close_min
 
-print(f"  H1 scans active window : 12:30 – 17:30 UTC  (5PM – 9:30PM UAE)")
-print(f"  H1 scans outside window: SKIPPED (0 MT5 calls from scanner)")
-print(f"  Right now (UTC {utc_hour:02d}:{utc_min:02d})  : "
-      f"{'SCANNING every 2 min' if in_active else 'IDLE - no scan calls'}")
+print(f"  H1 scans : CONTINUOUS 24/7 (data always fresh for all sessions)")
+print(f"  Signals  : only fired during 13:00-17:00 UTC (strategy time gate)")
+print(f"  Right now (UTC {utc_hour:02d}:{utc_min:02d}): scanning every 2 min")
 
 # ── Safety rating ─────────────────────────────────────────────────────────────
 print()
