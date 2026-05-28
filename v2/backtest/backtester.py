@@ -175,14 +175,38 @@ class Backtester:
         }
 
         logger.info(
-            "Backtest complete: %d trades | WR=%.1f%% | wins=%d losses=%d",
-            total_trades, win_rate * 100, total_wins, total_losses,
+            "Backtest complete: %d trades | WR=%.1f%% | wins=%d losses=%d BE=%d",
+            total_trades, win_rate * 100, total_wins, total_losses, total_breakevens,
         )
+
+        # ── Per-instrument hold-time summary ──────────────────────────────────
         logger.info("=" * 60)
-        logger.info("COMPOUNDING SUMMARY  ($%.2f per instrument, independent)", ACCOUNT_BALANCE)
-        logger.info("  Total P&L      : $%+.2f  (%+.1f%% on $%.2f deployed)",
-                    total_pnl_usd, return_pct, total_invested)
-        logger.info("  Max drawdown   : %.1f%%  (worst single instrument)", max_drawdown_pct)
+        logger.info("HOLD-TIME SUMMARY  (H1 bars = hours)")
+        logger.info("  %-10s  %6s  %6s  %6s  %6s  %6s  %6s  %6s",
+                    "Symbol", "Trades", "WR%", "AvgAll", "AvgWin", "AvgLoss", "MaxWin", "MaxAll")
+        logger.info("  " + "-" * 62)
+        for sym, res in by_instrument.items():
+            if "error" in res:
+                continue
+            hs  = res.get("hold_stats", {})
+            wr  = round(res.get("win_rate", 0) * 100, 1)
+            logger.info(
+                "  %-10s  %6d  %5.1f%%  %5.1fh  %5.1fh  %6.1fh  %5.1fh  %5.1fh",
+                sym,
+                res["trades_simulated"],
+                wr,
+                hs.get("avg_all_h", 0),
+                hs.get("avg_wins_h", 0),
+                hs.get("avg_losses_h", 0),
+                hs.get("max_wins_h", 0),
+                hs.get("max_all_h", 0),
+            )
+        logger.info("=" * 60)
+        logger.info("COMPOUNDING RESULTS  (starting balance: $%.2f)", ACCOUNT_BALANCE)
+        logger.info("  Ending balance : $%.2f", ACCOUNT_BALANCE + total_pnl_usd)
+        logger.info("  Total P&L      : $%+.2f  (%+.1f%%)", total_pnl_usd, return_pct)
+        logger.info("  Peak balance   : $%.2f", ACCOUNT_BALANCE + total_pnl_usd)
+        logger.info("  Max drawdown   : %.1f%%", max_drawdown_pct)
         logger.info("=" * 60)
         return summary
 
@@ -221,6 +245,9 @@ class Backtester:
         wins       = 0
         losses     = 0
         breakevens = 0
+        hold_hours_wins:   list[float] = []
+        hold_hours_losses: list[float] = []
+        hold_hours_be:     list[float] = []
 
         # Walk forward: start after MIN_LOOKBACK bars, step every SCAN_STEP bars
         # Leave MAX_HOLD_BARS at the end so every trade has room to resolve
@@ -358,12 +385,16 @@ class Backtester:
                 current_balance = max(current_balance + pnl_usd, 0.01)
                 pnl_series.append(pnl_usd)
 
+                hold_h = outcome["bars_held"]   # H1 bars = hours
                 if outcome["exit_reason"] in ("TP1", "TP2"):
                     wins += 1
+                    hold_hours_wins.append(hold_h)
                 elif outcome["exit_reason"] == "SL_AFTER_TP1":
                     breakevens += 1  # TP1 hit then stopped at entry
+                    hold_hours_be.append(hold_h)
                 else:
                     losses += 1
+                    hold_hours_losses.append(hold_h)
 
                 # Skip ahead: don't evaluate another signal until this trade
                 # has closed — simulates real "one trade at a time" behaviour
@@ -375,6 +406,22 @@ class Backtester:
         decisive = wins + losses
         win_rate = (wins / decisive) if decisive > 0 else 0.0
         instrument_pnl = sum(pnl_series)
+
+        def _avg(lst):  return round(sum(lst) / len(lst), 1) if lst else 0.0
+        def _max(lst):  return round(max(lst), 1)           if lst else 0.0
+        def _min(lst):  return round(min(lst), 1)           if lst else 0.0
+
+        all_hold = hold_hours_wins + hold_hours_losses + hold_hours_be
+        hold_stats = {
+            "avg_all_h":    _avg(all_hold),
+            "avg_wins_h":   _avg(hold_hours_wins),
+            "avg_losses_h": _avg(hold_hours_losses),
+            "avg_be_h":     _avg(hold_hours_be),
+            "max_wins_h":   _max(hold_hours_wins),
+            "max_losses_h": _max(hold_hours_losses),
+            "max_all_h":    _max(all_hold),
+        }
+
         return {
             "signals_evaluated": signals_evaluated,
             "trades_simulated":  trades_simulated,
@@ -385,6 +432,7 @@ class Backtester:
             "pnl_usd":           round(instrument_pnl, 2),
             "pnl_series":        pnl_series,
             "ending_balance":    round(current_balance, 2),
+            "hold_stats":        hold_stats,
         }
 
     # ── Outcome simulation ────────────────────────────────────────────────────
