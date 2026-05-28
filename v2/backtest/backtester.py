@@ -279,7 +279,15 @@ class Backtester:
                 logger.warning("%s: date-range filter failed (%s) — using full range", symbol, exc)
 
         total_bars = range_end_idx - range_start_idx
+        # Skip-ahead cursor: after a trade is taken, jump forward by however
+        # many bars the trade was held — prevents re-entering the same setup
+        # on consecutive bars (simulates real "one trade at a time" behaviour)
+        skip_until_bar = range_start_idx
+
         for bar_idx in range(range_start_idx, range_end_idx, SCAN_STEP):
+            if bar_idx < skip_until_bar:
+                continue
+
             # Progress log every 200 bars
             bars_done = bar_idx - MIN_LOOKBACK
             if bars_done > 0 and bars_done % 200 == 0:
@@ -356,6 +364,10 @@ class Backtester:
                     breakevens += 1  # TP1 hit then stopped at entry
                 else:
                     losses += 1
+
+                # Skip ahead: don't evaluate another signal until this trade
+                # has closed — simulates real "one trade at a time" behaviour
+                skip_until_bar = bar_idx + outcome["bars_held"] + 1
 
                 # Break direction loop — don't take both long AND short at same bar
                 break
