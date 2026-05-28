@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -36,14 +37,28 @@ MAX_HOLD_HOURS = 96   # force-close any trade open longer than this (4 days)
 # Backtest shows the longest winning trade was 79h — 96h gives a comfortable
 # buffer while freeing capital faster than the old 168h limit.
 
+# Per-symbol locks: prevents race condition where two concurrent scans both
+# pass the "one trade per symbol" check before either trade is written to DB.
+_SYMBOL_LOCKS: dict[str, threading.Lock] = {}
+_SYMBOL_LOCKS_MUTEX = threading.Lock()
+
+
+def _get_symbol_lock(symbol: str) -> threading.Lock:
+    """Return (creating if needed) a per-symbol threading lock."""
+    key = symbol.upper()
+    with _SYMBOL_LOCKS_MUTEX:
+        if key not in _SYMBOL_LOCKS:
+            _SYMBOL_LOCKS[key] = threading.Lock()
+        return _SYMBOL_LOCKS[key]
+
 
 class PaperTrader:
     """
     Autonomous paper trading engine.
 
-    open_trade()           → open a new paper position
-    check_all_open_trades() → scan all open trades for SL/TP/max-hold
-    monitor_trade()        → check a single trade
+    open_trade()            -> open a new paper position
+    check_all_open_trades() -> scan all open trades for SL/TP/max-hold
+    monitor_trade()         -> check a single trade
     """
 
     def __init__(self, journal: "Journal", feed: "DataFeed") -> None:
@@ -70,15 +85,40 @@ class PaperTrader:
         sl        = float(signal.get("stop_loss", 0))
 
         if not symbol or entry <= 0 or sl <= 0:
-            logger.warning("Invalid signal — missing symbol/entry/SL")
+            logger.warning("Invalid signal - missing symbol/entry/SL")
             return None
 
+        # Acquire per-symbol lock so concurrent scans can't both pass the
+        # "one trade per symbol" check before either trade reaches the DB.
+        sym_lock = _get_symbol_lock(symbol)
+        if not sym_lock.acquire(blocking=False):
+            logger.info(
+                "Trade blocked for %s: another open_trade call is in progress "
+                "(concurrent scan race) - skipping duplicate",
+                symbol,
+            )
+            return None
+
+        try:
+            return self._open_trade_locked(symbol, direction, entry, sl, signal)
+        finally:
+            sym_lock.release()
+
+    def _open_trade_locked(
+        self,
+        symbol:    str,
+        direction: str,
+        entry:     float,
+        sl:        float,
+        signal:    dict,
+    ) -> str | None:
+        """Inner open-trade logic — called only while holding the symbol lock."""
         # ── One trade per symbol — never double up on the same instrument ────
         open_trades = self._journal.get_open_trades()
         for t in open_trades:
             if t["symbol"].upper() == symbol.upper():
                 logger.info(
-                    "Trade blocked for %s: already have an open trade (%s) — "
+                    "Trade blocked for %s: already have an open trade (%s) - "
                     "wait for it to close before opening another",
                     symbol, t["id"][:8],
                 )
