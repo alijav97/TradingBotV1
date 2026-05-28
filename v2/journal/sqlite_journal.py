@@ -467,6 +467,27 @@ class Journal:
             "profit_factor": round(pf, 2),
         }
 
+    def get_paper_balance(self) -> float:
+        """
+        Return current compounded paper-trading balance.
+
+        Starts from ACCOUNT_BALANCE ($500) and applies every closed live
+        paper trade's PnL in chronological order.
+        Backtest trades (notes='backtest') are excluded.
+        """
+        from v2.settings import ACCOUNT_BALANCE
+        rows = self._conn.execute(
+            """SELECT pnl_usd FROM trades
+               WHERE status='CLOSED'
+               AND (notes IS NULL OR notes = '' OR notes NOT LIKE '%backtest%')
+               ORDER BY close_time ASC""",
+        ).fetchall()
+        balance = ACCOUNT_BALANCE
+        for r in rows:
+            pnl = r["pnl_usd"] or 0.0
+            balance = max(balance + pnl, 1.0)   # never go below $1
+        return round(balance, 2)
+
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def close(self) -> None:

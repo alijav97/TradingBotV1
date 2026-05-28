@@ -124,9 +124,15 @@ class PaperTrader:
                 )
                 return None
 
-        # Position sizing
-        lot_size = calculate_lot_size(symbol, entry, sl)
+        # Position sizing — use current compounded balance so lot size grows
+        # with wins and shrinks with losses (true compounding, 3% risk per trade)
+        current_balance = self._journal.get_paper_balance()
+        lot_size = calculate_lot_size(symbol, entry, sl, account_balance=current_balance)
         risk_usd = calculate_risk_usd(symbol, entry, sl, lot_size)
+        logger.info(
+            "Position sizing: balance=$%.2f  risk=3%%  risk_usd=$%.2f  lots=%.3f",
+            current_balance, risk_usd, lot_size,
+        )
 
         # Portfolio heat check
         allowed, reason = self._heat.can_open_trade(symbol, direction, risk_usd)
