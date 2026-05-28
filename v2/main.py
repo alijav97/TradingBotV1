@@ -41,7 +41,7 @@ try:
     from dotenv import load_dotenv
     _env_path = Path(os.environ.get("ENV_FILE", Path(__file__).parent.parent / ".env"))
     if _env_path.exists():
-        load_dotenv(_env_path, override=False)
+        load_dotenv(_env_path, override=True)
 except ImportError:
     pass
 
@@ -192,11 +192,12 @@ def main() -> None:
         active = settings.ACTIVE_SYMBOLS if settings.ACTIVE_SYMBOLS else ALL_SYMBOLS
         alerter = TelegramAlerter()
         alerter.send_text(
-            f"TradingBotV2 started\n"
+            f"TradingBotV2 started ✅\n"
             f"MT5: connected\n"
             f"Paper trading: ACTIVE\n"
             f"Instruments: {', '.join(active)}\n"
-            f"Signals scan: every 1H and 4H"
+            f"Kill-zone window: 13:00-17:00 UTC (5PM-9PM UAE)\n"
+            f"Scan: every 1H"
         )
     except Exception:
         pass
