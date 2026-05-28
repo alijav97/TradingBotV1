@@ -24,6 +24,7 @@ Score components (max 10.0):
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -74,56 +75,88 @@ class NYMomentumWTIStrategy(StrategyBase):
 
         is_long = direction.lower() in ("long", "buy")
 
-        # ── Session timing ────────────────────────────────────────────────────
-        current_hour = None
-        current_date = None
+        # ── Session timing — use WALL-CLOCK UTC, not bar timestamp ───────────
+        # MT5 bar timestamps use the broker's server time (Pepperstone UAE = UTC+3).
+        # Treating them as UTC shifts every hour check by +3, pushing our 13–17
+        # UTC window to appear as 16–20, so we always miss it.  The actual current
+        # UTC time from the OS clock is always correct regardless of broker TZ.
+        now_utc      = datetime.now(timezone.utc)
+        current_hour = now_utc.hour
+        current_date = now_utc.date()
+
+        # Detect server timezone offset so we can translate London session hours
+        # into server-time hours for the bar filter below.
+        server_tz_offset = 0
         try:
             raw_time  = df_h1["time"].iloc[-1]
-            last_time = pd.to_datetime(raw_time)
-            # Handle both timezone-aware and naive timestamps
-            if last_time.tzinfo is None:
-                last_time = last_time.tz_localize("UTC")
+            bar_time  = pd.to_datetime(raw_time)
+            if bar_time.tzinfo is not None:
+                bar_time = bar_time.tz_convert("UTC")
+                server_tz_offset = 0   # already UTC-aware, no adjustment needed
             else:
-                last_time = last_time.tz_convert("UTC")
-            current_hour = last_time.hour
-            current_date = last_time.date()
-            logger.debug(
-                "NYMomentumWTI [%s %s] last bar timestamp: %s → UTC hour=%d, date=%s",
-                symbol, direction.upper(), last_time.isoformat(), current_hour, current_date,
-            )
+                # Naive timestamp: infer offset = bar_hour − actual_UTC_hour
+                # (clamped to nearest whole hour, handles midnight wrap)
+                raw_hour = bar_time.hour
+                diff     = (raw_hour - now_utc.hour + 12) % 24 - 12
+                server_tz_offset = diff
+                bar_time = bar_time.tz_localize("UTC")   # treat as-is for date
         except Exception as exc:
             logger.warning("NYMomentumWTI [%s %s] timestamp parse error: %s", symbol, direction.upper(), exc)
 
-        if current_hour is not None and not (NY_START_UTC <= current_hour < NY_END_UTC):
+        logger.info(
+            "NYMomentumWTI [%s %s] wall-clock UTC %02d:xx | server_tz_offset=%+d | date=%s",
+            symbol, direction.upper(), current_hour, server_tz_offset, current_date,
+        )
+
+        if not (NY_START_UTC <= current_hour < NY_END_UTC):
             return _reject(
                 f"Not NY/NYMEX window (UTC {current_hour:02d}:xx, need {NY_START_UTC:02d}–{NY_END_UTC:02d})",
             )
 
         # ── Build London session range from today's bars ──────────────────────
+        # Bar timestamps are in server time (UTC + server_tz_offset).
+        # London session in server time = (LONDON_START + offset) to (LONDON_END + offset).
         london_bars = pd.DataFrame()
-        if current_date is not None and "time" in df_h1.columns:
+        if "time" in df_h1.columns:
             try:
                 raw_times = pd.to_datetime(df_h1["time"])
-                if raw_times.dt.tz is None:
-                    raw_times = raw_times.dt.tz_localize("UTC")
+                # Treat timestamps as server time (don't localise — just use their
+                # numeric hour value which is in server-local time)
+                server_london_start = (LONDON_START_UTC + server_tz_offset) % 24
+                server_london_end   = (LONDON_END_UTC   + server_tz_offset) % 24
+                server_today_date   = (now_utc.replace(tzinfo=None) +
+                                       __import__("datetime").timedelta(hours=server_tz_offset)).date()
+
+                if raw_times.dt.tz is not None:
+                    raw_times_naive = raw_times.dt.tz_convert("UTC").dt.tz_localize(None)
                 else:
-                    raw_times = raw_times.dt.tz_convert("UTC")
-                mask = (
-                    (raw_times.dt.date == current_date) &
-                    (raw_times.dt.hour >= LONDON_START_UTC) &
-                    (raw_times.dt.hour <  LONDON_END_UTC)
-                )
+                    raw_times_naive = raw_times
+
+                if server_london_start < server_london_end:
+                    hour_mask = (
+                        (raw_times_naive.dt.hour >= server_london_start) &
+                        (raw_times_naive.dt.hour <  server_london_end)
+                    )
+                else:
+                    # Wraps midnight (e.g. 23:00–04:00)
+                    hour_mask = (
+                        (raw_times_naive.dt.hour >= server_london_start) |
+                        (raw_times_naive.dt.hour <  server_london_end)
+                    )
+
+                mask = (raw_times_naive.dt.date == server_today_date) & hour_mask
                 london_bars = df_h1[mask]
-                # Log the first few timestamps from df_h1 so we can see if MT5 timezone offset is an issue
-                sample_times = raw_times.tail(10).dt.strftime("%Y-%m-%dT%H:%M").tolist()
+
+                sample_times = raw_times_naive.tail(10).dt.strftime("%Y-%m-%dT%H:%M").tolist()
                 logger.info(
-                    "NYMomentumWTI [%s %s] last 10 bar UTC times: %s",
+                    "NYMomentumWTI [%s %s] last 10 bar server times: %s",
                     symbol, direction.upper(), sample_times,
                 )
                 logger.info(
-                    "NYMomentumWTI [%s %s] London bars found: %d (date=%s, hours %d–%d UTC)",
-                    symbol, direction.upper(), len(london_bars), current_date,
-                    LONDON_START_UTC, LONDON_END_UTC,
+                    "NYMomentumWTI [%s %s] London bars found: %d "
+                    "(server date=%s, server hours %d–%d)",
+                    symbol, direction.upper(), len(london_bars),
+                    server_today_date, server_london_start, server_london_end,
                 )
             except Exception as exc:
                 logger.warning("NYMomentumWTI [%s %s] London bar filter error: %s", symbol, direction.upper(), exc)
