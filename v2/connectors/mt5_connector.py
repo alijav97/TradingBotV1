@@ -133,10 +133,14 @@ def get_ohlcv(
     return df
 
 
-def get_live_price(symbol: str) -> dict:
+def get_live_price(symbol: str, max_age_seconds: int = 300) -> dict:
     """
     Return latest bid/ask/spread for a symbol.
-    Returns empty dict on failure.
+
+    max_age_seconds: reject the tick if it is older than this many seconds.
+                     Default 300s (5 min) — protects against MT5 returning
+                     stale cached ticks when the market is thin or closed.
+    Returns empty dict on failure or stale data.
     """
     if not _MT5_AVAILABLE or not _connected:
         return {}
@@ -144,14 +148,36 @@ def get_live_price(symbol: str) -> dict:
     mt5.symbol_select(symbol, True)
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
+        logger.warning("get_live_price: no tick for %s", symbol)
         return {}
+
+    # Reject stale ticks — MT5 can return cached data from before market open
+    tick_utc  = datetime.fromtimestamp(tick.time, tz=timezone.utc)
+    now_utc   = datetime.now(timezone.utc)
+    age_secs  = (now_utc - tick_utc).total_seconds()
+
+    if age_secs > max_age_seconds:
+        logger.warning(
+            "get_live_price: %s tick is STALE (age=%.0fs > %ds limit) "
+            "bid=%.5f ask=%.5f tick_time=%s — returning empty to prevent wrong trades",
+            symbol, age_secs, max_age_seconds,
+            tick.bid, tick.ask, tick_utc.strftime("%H:%M:%S UTC"),
+        )
+        return {}
+
+    mid = round((tick.bid + tick.ask) / 2, 5)
+    logger.debug(
+        "get_live_price: %s bid=%.5f ask=%.5f mid=%.5f age=%.0fs",
+        symbol, tick.bid, tick.ask, mid, age_secs,
+    )
 
     return {
         "symbol": symbol,
-        "bid":    round(tick.bid,  5),
-        "ask":    round(tick.ask,  5),
+        "bid":    round(tick.bid, 5),
+        "ask":    round(tick.ask, 5),
         "spread": round(tick.ask - tick.bid, 5),
-        "time":   datetime.fromtimestamp(tick.time, tz=timezone.utc).isoformat(),
+        "time":   tick_utc.isoformat(),
+        "age_seconds": round(age_secs, 1),
     }
 
 

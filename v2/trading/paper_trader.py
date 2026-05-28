@@ -197,16 +197,24 @@ class PaperTrader:
         tp1_hit   = bool(trade.get("tp1_hit", 0))
         open_time = trade.get("open_time", "")
 
-        # Get current price — 5s timeout so a slow MT5 never blocks the scheduler
+        # Get current price — 5s timeout so a slow MT5 never blocks the scheduler.
+        # get_live_price already rejects ticks older than 5 min (stale market data
+        # protection), so an empty result here means "price unavailable" — skip tick.
         try:
             with ThreadPoolExecutor(max_workers=1) as ex:
                 price_info = ex.submit(self._feed.get_price, symbol).result(timeout=5)
         except (FuturesTimeoutError, Exception) as exc:
-            logger.debug("Price fetch timeout/error for %s: %s — skipping monitor tick", symbol, exc)
+            logger.debug("Price fetch timeout/error for %s: %s - skipping monitor tick", symbol, exc)
             return None
         if not price_info or not price_info.get("price"):
+            logger.debug("No live price for %s (stale or market closed) - skipping monitor tick", symbol)
             return None
         current_price = float(price_info["price"])
+        tick_age = price_info.get("age_seconds", 0)
+        logger.debug(
+            "Monitor %s: price=%.5f age=%.0fs | entry=%.5f sl=%.5f tp1=%.5f tp2=%.5f",
+            symbol, current_price, tick_age, entry, sl, tp1, tp2,
+        )
 
         is_long = direction.lower() in ("long", "buy")
 
