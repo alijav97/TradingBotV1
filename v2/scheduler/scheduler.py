@@ -41,6 +41,7 @@ try:
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
+    from apscheduler.executors.pool import ThreadPoolExecutor as APSThreadPool
     _APScheduler_OK = True
 except ImportError:
     _APScheduler_OK = False
@@ -65,7 +66,14 @@ class BotScheduler:
         self._journal   = journal
         self._feed      = feed
         self._limits    = LossLimits(journal)
-        self._scheduler = BackgroundScheduler(timezone="UTC") if _APScheduler_OK else None
+        # 10 threads: monitor + H1 scan + H4 scan can all run simultaneously
+        # without blocking each other when MT5 calls are slow
+        self._scheduler = (
+            BackgroundScheduler(
+                executors={"default": APSThreadPool(10)},
+                timezone="UTC",
+            ) if _APScheduler_OK else None
+        )
         self._alerter   = TelegramAlerter()
 
     def start(self) -> None:

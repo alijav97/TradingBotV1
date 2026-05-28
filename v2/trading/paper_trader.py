@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -143,8 +144,13 @@ class PaperTrader:
         tp1_hit   = bool(trade.get("tp1_hit", 0))
         open_time = trade.get("open_time", "")
 
-        # Get current price
-        price_info = self._feed.get_price(symbol)
+        # Get current price — 5s timeout so a slow MT5 never blocks the scheduler
+        try:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                price_info = ex.submit(self._feed.get_price, symbol).result(timeout=5)
+        except (FuturesTimeoutError, Exception) as exc:
+            logger.debug("Price fetch timeout/error for %s: %s — skipping monitor tick", symbol, exc)
+            return None
         if not price_info or not price_info.get("price"):
             return None
         current_price = float(price_info["price"])
@@ -243,7 +249,8 @@ class PaperTrader:
     def _get_current_atr(self, symbol: str) -> float:
         """Fetch the current ATR for a symbol (used for trailing SL). Returns 0 on failure."""
         try:
-            df = self._feed.get_ohlcv(symbol, "H1", 20)
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                df = ex.submit(self._feed.get_ohlcv, symbol, "H1", 20).result(timeout=5)
             if df.empty or len(df) < 5:
                 return 0.0
             high, low, close = df["high"], df["low"], df["close"]
@@ -260,7 +267,8 @@ class PaperTrader:
         """Build exit-time context dict for ML enrichment."""
         ctx: dict = {"hold_time_minutes": round(hold_minutes, 1), "exit_atr": round(atr, 5)}
         try:
-            df = self._feed.get_ohlcv(symbol, "H1", 50)
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                df = ex.submit(self._feed.get_ohlcv, symbol, "H1", 50).result(timeout=5)
             if not df.empty:
                 from v2.analysis.indicators import get_adx
                 adx_result = get_adx(df)
