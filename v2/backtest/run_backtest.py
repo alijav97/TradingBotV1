@@ -34,7 +34,7 @@ from pathlib import Path
 
 logging.basicConfig(
     level   = logging.INFO,
-    format  = "%(asctime)s %(levelname)-7s %(name)s — %(message)s",
+    format  = "%(asctime)s %(levelname)-7s %(name)s - %(message)s",
     datefmt = "%H:%M:%S",
     handlers= [
         logging.StreamHandler(sys.stdout),
@@ -167,7 +167,7 @@ def main() -> None:
     t0 = time.time()
 
     if start_date:
-        logger.info(" Date range      : %s  →  %s",
+        logger.info(" Date range      : %s  ->  %s",
                     start_date.strftime("%Y-%m-%d"),
                     end_date.strftime("%Y-%m-%d") if end_date else "today")
 

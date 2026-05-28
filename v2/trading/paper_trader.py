@@ -32,9 +32,9 @@ from v2.risk.portfolio_heat import PortfolioHeat
 
 logger = logging.getLogger(__name__)
 
-MAX_HOLD_HOURS = 168  # force-close any trade open longer than this (7 days)
-# After TP1 hits, SL moves to breakeven — holding 7 days costs nothing extra
-# and gives TP2 (5:1 RR) a realistic chance to be reached.
+MAX_HOLD_HOURS = 96   # force-close any trade open longer than this (4 days)
+# Backtest shows the longest winning trade was 79h — 96h gives a comfortable
+# buffer while freeing capital faster than the old 168h limit.
 
 
 class PaperTrader:

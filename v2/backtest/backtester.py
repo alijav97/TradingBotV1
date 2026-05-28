@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # How many H1 bars forward to scan for SL/TP outcome
-MAX_HOLD_BARS = 168         # 168 hours / 7 days (matches live MAX_HOLD_HOURS)
+MAX_HOLD_BARS = 96          # 96 hours / 4 days (matches live MAX_HOLD_HOURS)
 # Minimum lookback bars needed to compute indicators reliably
 MIN_LOOKBACK  = 120
 # Step size: evaluate a signal every N bars (avoids overlapping signals)
@@ -138,7 +138,7 @@ class Backtester:
                 total_pnl_usd += inst_pnl
 
                 logger.info(
-                    "  %s done: %d trades | WR=%.1f%% | BE=%d | $%.2f → $%.2f (%+.1f%%)",
+                    "  %s done: %d trades | WR=%.1f%% | BE=%d | $%.2f -> $%.2f (%+.1f%%)",
                     symbol,
                     result["trades_simulated"],
                     result["win_rate"] * 100,
@@ -262,7 +262,7 @@ class Backtester:
                 times = pd.to_datetime(df_full["time"], utc=True)
                 data_start = times.iloc[0]
                 data_end   = times.iloc[-1]
-                logger.info("%s: available data %s → %s",
+                logger.info("%s: available data %s -> %s",
                             symbol, data_start.date(), data_end.date())
 
                 if self._start_date is not None:
@@ -280,7 +280,7 @@ class Backtester:
                     idxs = df_full.index[times >= sd].tolist()
                     if idxs:
                         range_start_idx = max(int(idxs[0]), MIN_LOOKBACK)
-                        logger.info("%s: date range from %s → bar %d", symbol, sd.date(), range_start_idx)
+                        logger.info("%s: date range from %s -> bar %d", symbol, sd.date(), range_start_idx)
 
                 if self._end_date is not None:
                     ed = pd.Timestamp(self._end_date)
@@ -297,7 +297,7 @@ class Backtester:
                     idxs = df_full.index[times <= ed].tolist()
                     if idxs:
                         range_end_idx = min(int(idxs[-1]) - MAX_HOLD_BARS, end_bar)
-                        logger.info("%s: date range to   %s → bar %d", symbol, ed.date(), range_end_idx)
+                        logger.info("%s: date range to   %s -> bar %d", symbol, ed.date(), range_end_idx)
                     else:
                         logger.warning("%s: no bars before %s — 0 trades", symbol, ed.date())
                         range_end_idx = range_start_idx  # empty range
