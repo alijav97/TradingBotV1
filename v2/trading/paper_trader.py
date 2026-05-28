@@ -32,7 +32,7 @@ from v2.risk.portfolio_heat import PortfolioHeat
 
 logger = logging.getLogger(__name__)
 
-MAX_HOLD_HOURS = 48   # force-close any trade open longer than this
+MAX_HOLD_HOURS = 96   # force-close any trade open longer than this (4 days)
 
 
 class PaperTrader:
