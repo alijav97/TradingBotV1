@@ -126,7 +126,18 @@ def get_ohlcv(
         return _empty_ohlcv()
 
     df = pd.DataFrame(rates)
+    # Convert Unix timestamps.
+    # Pepperstone (and some other brokers) store the Unix epoch in server-local
+    # time (UTC+3) rather than proper UTC. We subtract the server offset so all
+    # downstream code works with true UTC timestamps.
+    from v2.settings import MT5_SERVER_UTC_OFFSET
     df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
+    if MT5_SERVER_UTC_OFFSET != 0:
+        df["time"] = df["time"] - pd.Timedelta(hours=MT5_SERVER_UTC_OFFSET)
+        logger.debug(
+            "Normalised %s %s timestamps: subtracted %+dh broker offset -> true UTC",
+            symbol, timeframe, MT5_SERVER_UTC_OFFSET,
+        )
     df = df.rename(columns={"tick_volume": "volume", "real_volume": "real_volume"})
     df = df[["time", "open", "high", "low", "close", "volume"]].copy()
     df = df.sort_values("time").reset_index(drop=True)

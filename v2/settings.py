@@ -65,6 +65,12 @@ ML_RETRAIN_INTERVAL    = int(os.environ.get("ML_RETRAIN_INTERVAL", "50"))   # ev
 # ── Timezone ──────────────────────────────────────────────────────────────────
 TIMEZONE_OFFSET_HOURS = 4   # GST (UTC+4)
 
+# MT5 broker server UTC offset.
+# Pepperstone UAE server runs UTC+3 but stores Unix timestamps as server-local
+# time rather than proper UTC epoch. Set this to the broker's UTC offset so
+# the connector can normalise all bar timestamps to true UTC.
+MT5_SERVER_UTC_OFFSET = int(os.environ.get("MT5_SERVER_UTC_OFFSET", "3"))
+
 # ── Scheduler intervals ───────────────────────────────────────────────────────
 TRADE_MONITOR_INTERVAL_SEC = 60
 H1_SCAN_INTERVAL_MIN       = 60
