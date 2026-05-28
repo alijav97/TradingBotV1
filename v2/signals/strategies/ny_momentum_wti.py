@@ -212,12 +212,22 @@ class NYMomentumWTIStrategy(StrategyBase):
                 return _reject(
                     f"No London high breakout — bar high {bar_high:.3f} ≤ london high {london_high:.3f}",
                 )
+            # Require close above London high — wick-only breakouts are false breakouts
+            if price <= london_high:
+                return _reject(
+                    f"Wick breakout only — close {price:.3f} ≤ london high {london_high:.3f} (no close confirmation)",
+                )
             breakout_level = london_high
             sl             = london_low
         else:
             if bar_low >= london_low:
                 return _reject(
                     f"No London low breakout — bar low {bar_low:.3f} ≥ london low {london_low:.3f}",
+                )
+            # Require close below London low — wick-only breakouts are false breakouts
+            if price >= london_low:
+                return _reject(
+                    f"Wick breakout only — close {price:.3f} ≥ london low {london_low:.3f} (no close confirmation)",
                 )
             breakout_level = london_low
             sl             = london_high

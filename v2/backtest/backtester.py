@@ -41,7 +41,7 @@ MAX_HOLD_BARS = 168         # 168 hours / 7 days (matches live MAX_HOLD_HOURS)
 # Minimum lookback bars needed to compute indicators reliably
 MIN_LOOKBACK  = 120
 # Step size: evaluate a signal every N bars (avoids overlapping signals)
-SCAN_STEP     = 4           # evaluate every 4 hours
+SCAN_STEP     = 1           # evaluate every bar (kill-zone window is only 4h wide)
 
 
 class Backtester:
