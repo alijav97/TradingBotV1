@@ -87,8 +87,10 @@ class ConfluenceEngine:
 
         # ── PRIMARY PATH: Strategy Selector ──────────────────────────────────
         try:
+            from v2.signals.strategies.strategy_selector import _INSTRUMENT_MIN_SCORE
+            _instrument_min = _INSTRUMENT_MIN_SCORE.get(symbol.upper(), self.min_score)
             strat_result = _selector.select(symbol, direction, df_h1, df_h4, df_d1, context)
-            if strat_result and strat_result.signal and strat_result.score >= self.min_score:
+            if strat_result and strat_result.signal and strat_result.score >= _instrument_min:
                 logger.info(
                     "Strategy signal: %s %s %s score=%.1f entry=%.5f",
                     symbol, direction, strat_result.strategy_name,
