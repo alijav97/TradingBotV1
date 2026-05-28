@@ -75,12 +75,23 @@ class NYMomentumWTIStrategy(StrategyBase):
 
         is_long = direction.lower() in ("long", "buy")
 
-        # ── Session timing — use WALL-CLOCK UTC, not bar timestamp ───────────
-        # MT5 bar timestamps use the broker's server time (Pepperstone UAE = UTC+3).
-        # Treating them as UTC shifts every hour check by +3, pushing our 13–17
-        # UTC window to appear as 16–20, so we always miss it.  The actual current
-        # UTC time from the OS clock is always correct regardless of broker TZ.
-        now_utc      = datetime.now(timezone.utc)
+        # ── Session timing ────────────────────────────────────────────────────
+        # Live mode:    use OS wall-clock UTC — MT5 bar timestamps are in server
+        #               time (Pepperstone UAE UTC+3) so they can't be trusted.
+        # Backtest mode: context passes bar_time (historical bar's timestamp)
+        #               so we simulate the correct session window for each bar.
+        if context and "bar_time" in context:
+            # Backtest: use the bar's timestamp as the simulated current time
+            _bt = pd.to_datetime(context["bar_time"])
+            if _bt.tzinfo is None:
+                _bt = _bt.tz_localize("UTC")
+            else:
+                _bt = _bt.tz_convert("UTC")
+            now_utc = _bt.to_pydatetime()
+        else:
+            # Live: always use wall-clock UTC (avoids broker server TZ offset)
+            now_utc = datetime.now(timezone.utc)
+
         current_hour = now_utc.hour
         current_date = now_utc.date()
 

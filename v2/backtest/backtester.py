@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # How many H1 bars forward to scan for SL/TP outcome
-MAX_HOLD_BARS = 48          # 48 hours (matches live MAX_HOLD_HOURS)
+MAX_HOLD_BARS = 168         # 168 hours / 7 days (matches live MAX_HOLD_HOURS)
 # Minimum lookback bars needed to compute indicators reliably
 MIN_LOOKBACK  = 120
 # Step size: evaluate a signal every N bars (avoids overlapping signals)
@@ -297,7 +297,11 @@ class Backtester:
             for direction in ("long", "short"):
                 signals_evaluated += 1
 
-                result = self._engine.score(symbol, direction, window, window_h4, window_d1)
+                # Pass bar_time through context so kill-zone strategy uses
+                # the historical bar's timestamp instead of datetime.now(UTC)
+                bar_time = window["time"].iloc[-1] if "time" in window.columns else None
+                bt_context = {"bar_time": bar_time} if bar_time is not None else {}
+                result = self._engine.score(symbol, direction, window, window_h4, window_d1, bt_context)
 
                 if not result.get("signal"):
                     continue
