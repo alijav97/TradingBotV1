@@ -218,7 +218,10 @@ class NYMomentumWTIStrategy(StrategyBase):
                     f"Wick breakout only — close {price:.3f} ≤ london high {london_high:.3f} (no close confirmation)",
                 )
             breakout_level = london_high
-            sl             = london_low
+            # ATR-based SL: 1.2× ATR below entry (tighter than London low)
+            sl = round(price - atr * 1.2, 5)
+            # Safety cap: SL never beyond London low (structural invalidation)
+            sl = max(sl, london_low)
         else:
             if bar_low >= london_low:
                 return _reject(
@@ -230,7 +233,11 @@ class NYMomentumWTIStrategy(StrategyBase):
                     f"Wick breakout only — close {price:.3f} ≥ london low {london_low:.3f} (no close confirmation)",
                 )
             breakout_level = london_low
-            sl             = london_high
+            # ATR-based SL: 1.2× ATR above entry (tighter than London high,
+            # allows larger lot sizes and faster SL resolution)
+            sl = round(price + atr * 1.2, 5)
+            # Safety cap: SL never beyond London high (structural invalidation)
+            sl = min(sl, london_high)
 
         sl_dist = abs(price - sl)
         if sl_dist <= 0:
