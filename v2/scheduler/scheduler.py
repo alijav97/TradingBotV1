@@ -154,6 +154,24 @@ class BotScheduler:
 
     def _job_scan(self, timeframe: str) -> None:
         """Run confluence scan on active instruments for a given timeframe."""
+        # ── MT5 message conservation: skip H1 scans far outside kill-zone ────
+        # The WTI strategy only fires 13:00-17:00 UTC. Scanning at 3AM wastes
+        # MT5 API calls. Allow a 30-min buffer either side so we never miss a
+        # setup at the boundary.
+        if timeframe == "H1":
+            utc_hour   = datetime.now(timezone.utc).hour
+            utc_minute = datetime.now(timezone.utc).minute
+            utc_mins   = utc_hour * 60 + utc_minute
+            # Kill-zone window with 30-min buffer: 12:30–17:30 UTC
+            KZ_OPEN_MINS  = 12 * 60 + 30   # 12:30 UTC
+            KZ_CLOSE_MINS = 17 * 60 + 30   # 17:30 UTC
+            if not (KZ_OPEN_MINS <= utc_mins <= KZ_CLOSE_MINS):
+                logger.debug(
+                    "H1 scan skipped — outside kill-zone window "
+                    "(UTC %02d:%02d, active 12:30-17:30 UTC)", utc_hour, utc_minute,
+                )
+                return
+
         symbols = ACTIVE_SYMBOLS if ACTIVE_SYMBOLS else ALL_SYMBOLS
         logger.info("Signal scan starting: %s  instruments=%s", timeframe, symbols)
 
