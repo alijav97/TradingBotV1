@@ -92,14 +92,16 @@ class BotScheduler:
             misfire_grace_time = 30,
         )
 
-        # H1 signal scan — every hour at :00
+        # H1 signal scan — every 2 minutes
+        # Strategy's own time gate (13:00-17:00 UTC) blocks trades outside the
+        # kill-zone window, so frequent scanning is safe and catches setups fast
         self._scheduler.add_job(
             func     = lambda: self._job_scan("H1"),
-            trigger  = CronTrigger(minute=0),
+            trigger  = IntervalTrigger(minutes=2),
             id       = "scan_h1",
             name     = "H1 signal scan",
             max_instances = 1,
-            misfire_grace_time = 120,
+            misfire_grace_time = 30,
         )
 
         # H4 signal scan — every 4 hours at :00

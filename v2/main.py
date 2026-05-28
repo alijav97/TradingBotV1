@@ -197,7 +197,7 @@ def main() -> None:
             f"Paper trading: ACTIVE\n"
             f"Instruments: {', '.join(active)}\n"
             f"Kill-zone window: 13:00-17:00 UTC (5PM-9PM UAE)\n"
-            f"Scan: every 1H"
+            f"Scan: every 2 mins (kill-zone 5PM-9PM UAE)"
         )
     except Exception:
         pass
