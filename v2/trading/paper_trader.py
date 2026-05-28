@@ -71,6 +71,17 @@ class PaperTrader:
             logger.warning("Invalid signal — missing symbol/entry/SL")
             return None
 
+        # ── One trade per symbol — never double up on the same instrument ────
+        open_trades = self._journal.get_open_trades()
+        for t in open_trades:
+            if t["symbol"].upper() == symbol.upper():
+                logger.info(
+                    "Trade blocked for %s: already have an open trade (%s) — "
+                    "wait for it to close before opening another",
+                    symbol, t["id"][:8],
+                )
+                return None
+
         # Position sizing
         lot_size = calculate_lot_size(symbol, entry, sl)
         risk_usd = calculate_risk_usd(symbol, entry, sl, lot_size)
