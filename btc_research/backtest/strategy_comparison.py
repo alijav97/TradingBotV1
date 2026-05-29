@@ -35,18 +35,20 @@ from btc_research.strategies.ema_trend         import EMATrendFollow
 from btc_research.strategies.rsi_reversion     import RSIMeanReversion
 from btc_research.strategies.volatility_breakout import VolatilityBreakout
 from btc_research.strategies.swing_level       import SwingLevelBreak
+from btc_research.strategies.combined         import CombinedStrategy
 from btc_research.factors.gold_factor          import compute_gold_factor
 from btc_research.factors.nasdaq_factor        import compute_nasdaq_factor
 from btc_research.factors.btc_momentum        import compute_btc_momentum
 
 
-# All strategies to compare
+# All strategies to compare (Combined uses optimized params from optimizer run)
 ALL_STRATEGIES: list[BTCStrategy] = [
     MorningRangeBreakout(range_bars=6),
     EMATrendFollow(),
     RSIMeanReversion(),
     VolatilityBreakout(),
     SwingLevelBreak(),
+    CombinedStrategy(atr_multiplier=1.2, close_zone=0.45, range_bars=6),
 ]
 
 
@@ -200,6 +202,10 @@ def _simulate(
                 lots = _lot_size(balance, entry, sl)
                 trade_id = f"{strategy.name[:3].upper()}-{len(trades)+1:04d}"
 
+                # For CombinedStrategy, use strategy_used; for others use reason
+                sig_label = (sig.get("strategy_used")
+                             or sig.get("reason", ""))
+
                 open_trade = {
                     "id":           trade_id,
                     "direction":    direction,
@@ -215,7 +221,7 @@ def _simulate(
                     "open_hour":    bar_time.hour,
                     "open_time":    bar_time.isoformat(),
                     "im_score":     im_score,
-                    "signal_reason": sig.get("reason", ""),
+                    "signal_reason": sig_label,
                 }
                 break   # one direction per bar
 
@@ -396,6 +402,40 @@ def run_comparison(
         parts = [f"{reason}:{count}({count/total*100:.0f}%)"
                  for reason, count in exits.items()]
         print(f"  {r['strategy']:<28}: {' | '.join(parts)}")
+
+    # Combined strategy — show which sub-strategy fired most
+    combined_results = [r for r in all_results if "Combined" in r["strategy"]]
+    if combined_results:
+        print()
+        print(SEP)
+        print("COMBINED STRATEGY — SUB-STRATEGY BREAKDOWN (filtered trades)")
+        print("(shows which individual strategy inside Combined fired each trade)")
+        print(SEP)
+        for r in combined_results:
+            t_list = r["filtered_trades"]
+            if not t_list:
+                print(f"  {r['strategy']}: no trades")
+                continue
+            df_t = pd.DataFrame(t_list)
+            if "signal_reason" not in df_t.columns:
+                continue
+            # signal_reason stores strategy name for Combined
+            # We stored it in sig["reason"] — but strategy_used is in signal_reason
+            # Actually we need to check — the combined strategy adds strategy_used to the result
+            # which gets stored in open_trade["signal_reason"] via sig.get("reason", "")
+            # The combined strategy sets result["strategy_used"] but not result["reason"]
+            # Let's just show what we have
+            total = len(df_t)
+            if "signal_reason" in df_t.columns:
+                by_sub = df_t["signal_reason"].value_counts()
+                print(f"  {r['strategy']} ({total} trades):")
+                for sub_name, cnt in by_sub.items():
+                    wr_sub = df_t[df_t["signal_reason"] == sub_name]["pnl_usd"]
+                    wins_sub = (wr_sub > 0).sum()
+                    wr_pct = wins_sub / cnt * 100 if cnt > 0 else 0
+                    avg_r_sub = df_t[df_t["signal_reason"] == sub_name]["r_multiple"].mean()
+                    label = sub_name if sub_name else "unknown"
+                    print(f"    {label:<30}: {cnt:>4} trades  WR={wr_pct:>5.1f}%  AvgR={avg_r_sub:>+5.2f}R")
 
     print(SEP)
     print()
