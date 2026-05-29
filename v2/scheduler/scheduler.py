@@ -82,6 +82,12 @@ class BotScheduler:
             logger.error("Cannot start — APScheduler not available")
             return
 
+        # Silence APScheduler's per-execution INFO noise — the 2-second and
+        # 5-second jobs fire hundreds of times per hour and would flood the log.
+        # WARNING level still surfaces real errors (missed jobs, exceptions).
+        import logging as _logging
+        _logging.getLogger("apscheduler").setLevel(_logging.WARNING)
+
         # Trade monitor — every 60 seconds
         self._scheduler.add_job(
             func     = self._job_monitor_trades,
