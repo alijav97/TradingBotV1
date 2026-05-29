@@ -8,3 +8,8 @@ venv/
 *.log
 data/
 outputs/
+
+# Allow btc_research data module (Python files only, not cached CSV data)
+!btc_research/data/
+!btc_research/data/__init__.py
+!btc_research/data/fetcher.py
