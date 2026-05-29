@@ -26,28 +26,28 @@ MT5_SERVER_UTC_OFFSET = 3
 #   13-17 UTC — 38.2% WR  (WTI assumption was wrong for BTC)
 #
 # Asia Night session (00-04 UTC) overall: 46.9% WR, +$15,634 total PnL — BEST
-# Combined strategy session scan results (run_combined_session_scan):
+# Per-strategy session scan (run_per_strategy_scan) results:
 #
-#   05:00 UTC — 46.2% WR, +0.19R, $+14,855  ← 2nd best quality
-#   06:00 UTC — 46.6% WR, +0.36R, $+26,124  ← BEST quality (highest WR + Avg R)
-#   04:00 UTC — 35.5% WR, -0.04R, $-2,242   ← AVOID (drags Asia Open block down)
-#   07:00 UTC — 41.1% WR, +0.19R, $+8,026   ← decent but weaker than 05/06
+#   Per-strategy optimal sessions:
+#     Volatility Breakout  → Asia Night 00-04 UTC (+0.70R avg, 16.6% MaxDD)
+#     Swing Level Break    → Asia Night 00-04 UTC (51.0% WR, 19.9% MaxDD)
+#     Morning Range Break  → US Open   13-17 UTC  (40.6% WR, 23.1% MaxDD)
+#     EMA Trend Follow     → EU Session 08-12 UTC  (40.1% WR, 23.5% MaxDD)
 #
-# Optimal window: 05:00-07:00 UTC (just 2 hours — pure quality)
-#   ~145+146 = ~291 trades/2yr = 12 trades/month
-#   Expected WR ~46%+ after filtering
-#   This is late Asian session close + early European pre-market positioning
+#   Combined (3-Strategy) best session: US Late 21-24 UTC
+#     223 trades | WR=43.0% | AvgR=+0.47R | PnL=$+23,733 | MaxDD=16.1%
+#     This beats every individual strategy at their own best session.
 #
-# UAE time equivalent: 09:00-11:00 AM UAE
-KZ_START_UTC = 5
-KZ_END_UTC   = 7
+# UAE time equivalent: 01:00 AM – 04:00 AM UAE (bot runs overnight)
+KZ_START_UTC = 21
+KZ_END_UTC   = 24
 
 # ── Morning range window (range forms BEFORE kill-zone entry) ─────────────────
 # For 05-07 UTC kill-zone, range forms during Asia Night / early Asia session: 22:00-05:00 UTC
 # Using 6-bar lookback in strategy (last 6 bars before signal bar) is cleaner
 # than a fixed session window here, so MR_START/END are kept for documentation.
-MR_START_UTC = 22   # late US / early Asia Night
-MR_END_UTC   = 5    # just before kill-zone opens
+MR_START_UTC = 17   # US Mid onwards — consolidation before US Late session
+MR_END_UTC   = 21   # just before kill-zone opens
 
 # ── Risk & position sizing ────────────────────────────────────────────────────
 STARTING_BALANCE = 10_000   # USD — backtest starting capital
