@@ -172,8 +172,13 @@ class SwingLevelBreak(BTCStrategy):
                     "reason": "zero SL distance"}
 
         return {
-            "signal": True,
-            "entry":  round(bar_close, 2),
-            "sl":     round(sl_val, 2),
-            "reason": reason,
+            "signal":  True,
+            "entry":   round(bar_close, 2),
+            "sl":      round(sl_val, 2),
+            "reason":  reason,
+            # Per-strategy TP levels — structural breaks have a natural measured move
+            # (swing-to-swing distance). Conservative TP2 at 3R; tight TP1 at 1.5R
+            # because price often retests the broken level before continuing.
+            "tp1_rr":  1.5,
+            "tp2_rr":  3.0,
         }

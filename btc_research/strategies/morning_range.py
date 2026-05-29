@@ -71,8 +71,12 @@ class MorningRangeBreakout(BTCStrategy):
         side = "above" if is_long else "below"
         ref  = range_high if is_long else range_low
         return {
-            "signal": True,
-            "entry":  round(bar_close, 2),
-            "sl":     round(sl, 2),
-            "reason": f"range breakout {side} {ref:.2f} (range={range_high-range_low:.2f})",
+            "signal":  True,
+            "entry":   round(bar_close, 2),
+            "sl":      round(sl, 2),
+            "reason":  f"range breakout {side} {ref:.2f} (range={range_high-range_low:.2f})",
+            # Per-strategy TP levels — range expansions typically reach 3-5× the range width
+            # TP1=2R protects early; TP2=5R captures the full expansion.
+            "tp1_rr":  2.0,
+            "tp2_rr":  5.0,
         }

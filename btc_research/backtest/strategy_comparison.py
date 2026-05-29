@@ -179,6 +179,8 @@ def _simulate(
                     "balance_after": round(balance, 2),
                     "signal_reason": t.get("signal_reason", ""),
                     "used_filter":   use_intermarket,
+                    "tp1_rr":        t.get("tp1_rr", TP1_RR),
+                    "tp2_rr":        t.get("tp2_rr", TP2_RR),
                 })
                 open_trade = None
 
@@ -214,8 +216,12 @@ def _simulate(
                         continue   # inter-market factors oppose this trade
 
                 sl_dist = abs(entry - sl)
-                tp1 = entry + TP1_RR * sl_dist if direction == "long" else entry - TP1_RR * sl_dist
-                tp2 = entry + TP2_RR * sl_dist if direction == "long" else entry - TP2_RR * sl_dist
+                # Use per-strategy TP multipliers if the signal provides them,
+                # otherwise fall back to the global settings values.
+                trade_tp1_rr = sig.get("tp1_rr", TP1_RR)
+                trade_tp2_rr = sig.get("tp2_rr", TP2_RR)
+                tp1 = entry + trade_tp1_rr * sl_dist if direction == "long" else entry - trade_tp1_rr * sl_dist
+                tp2 = entry + trade_tp2_rr * sl_dist if direction == "long" else entry - trade_tp2_rr * sl_dist
                 lots = _lot_size(balance, entry, sl)
                 trade_id = f"{strategy.name[:3].upper()}-{len(trades)+1:04d}"
 
@@ -231,6 +237,8 @@ def _simulate(
                     "original_sl":  sl,
                     "tp1":          tp1,
                     "tp2":          tp2,
+                    "tp1_rr":       trade_tp1_rr,
+                    "tp2_rr":       trade_tp2_rr,
                     "lots":         lots,
                     "tp1_hit":      False,
                     "tp1_pnl":      0.0,
@@ -465,7 +473,12 @@ def run_comparison(
                     wr_pct = wins_sub / cnt * 100 if cnt > 0 else 0
                     avg_r_sub = df_t[df_t["signal_reason"] == sub_name]["r_multiple"].mean()
                     label = sub_name if sub_name else "unknown"
-                    print(f"    {label:<30}: {cnt:>4} trades  WR={wr_pct:>5.1f}%  AvgR={avg_r_sub:>+5.2f}R")
+                    # Show TP config for this sub-strategy
+                sub_rows = df_t[df_t["signal_reason"] == sub_name]
+                tp1_used = sub_rows["tp1_rr"].iloc[0] if "tp1_rr" in sub_rows.columns and len(sub_rows) > 0 else "?"
+                tp2_used = sub_rows["tp2_rr"].iloc[0] if "tp2_rr" in sub_rows.columns and len(sub_rows) > 0 else "?"
+                tp_str   = f"TP1={tp1_used}R/TP2={tp2_used}R" if tp1_used != "?" else ""
+                print(f"    {label:<30}: {cnt:>4} trades  WR={wr_pct:>5.1f}%  AvgR={avg_r_sub:>+5.2f}R  {tp_str}")
 
     print(SEP)
     print()

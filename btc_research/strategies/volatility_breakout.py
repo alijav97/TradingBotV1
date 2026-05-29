@@ -114,9 +114,13 @@ class VolatilityBreakout(BTCStrategy):
                     "reason": "zero SL distance"}
 
         return {
-            "signal": True,
-            "entry":  round(bar_close, 2),
-            "sl":     round(sl_val, 2),
-            "reason": (f"ATR breakout {bar_range:.2f} = {bar_range/atr:.1f}×ATR "
-                       f"| close@{close_position:.0%} of bar"),
+            "signal":  True,
+            "entry":   round(bar_close, 2),
+            "sl":      round(sl_val, 2),
+            "reason":  (f"ATR breakout {bar_range:.2f} = {bar_range/atr:.1f}×ATR "
+                        f"| close@{close_position:.0%} of bar"),
+            # Per-strategy TP levels — explosive bars kick off large directional moves
+            # TP2 at 9R lets the momentum run instead of capping at the global 5R
+            "tp1_rr":  2.0,
+            "tp2_rr":  9.0,
         }

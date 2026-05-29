@@ -107,10 +107,14 @@ class EMATrendFollow(BTCStrategy):
                     "reason": "zero SL distance"}
 
         return {
-            "signal": True,
-            "entry":  round(current, 2),
-            "sl":     round(sl_val, 2),
-            "reason": (f"EMA stack {'bull' if is_long else 'bear'} "
-                       f"| RSI={rsi:.1f} "
-                       f"| macro={'above' if current > ema_macro else 'below'} D1 EMA"),
+            "signal":  True,
+            "entry":   round(current, 2),
+            "sl":      round(sl_val, 2),
+            "reason":  (f"EMA stack {'bull' if is_long else 'bear'} "
+                        f"| RSI={rsi:.1f} "
+                        f"| macro={'above' if current > ema_macro else 'below'} D1 EMA"),
+            # Per-strategy TP levels — trend entries can ride multi-bar moves.
+            # TP2=6R gives room for the trend to extend without cutting too early.
+            "tp1_rr":  2.0,
+            "tp2_rr":  6.0,
         }

@@ -105,9 +105,13 @@ class RSIMeanReversion(BTCStrategy):
                     "reason": "zero SL distance"}
 
         return {
-            "signal": True,
-            "entry":  round(current, 2),
-            "sl":     round(sl_val, 2),
-            "reason": (f"RSI {'oversold exit' if is_long else 'overbought exit'} "
-                       f"| RSI {rsi_prev:.1f} -> {rsi_now:.1f}"),
+            "signal":  True,
+            "entry":   round(current, 2),
+            "sl":      round(sl_val, 2),
+            "reason":  (f"RSI {'oversold exit' if is_long else 'overbought exit'} "
+                        f"| RSI {rsi_prev:.1f} -> {rsi_now:.1f}"),
+            # Per-strategy TP levels — counter-trend fades rarely run far.
+            # Very tight TP1 at 1.5R (grab profit fast); TP2 at 2.5R maximum.
+            "tp1_rr":  1.5,
+            "tp2_rr":  2.5,
         }
