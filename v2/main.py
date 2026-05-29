@@ -29,6 +29,7 @@ Docker
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import os
 import signal
 import sys
@@ -46,13 +47,33 @@ except ImportError:
     pass
 
 # ── Logging must be configured before any v2 imports so all modules pick it up.
+# Log directory is created by settings.py on import; define the path here
+# before importing settings so we can use it in the handler.
+_LOG_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parent / "data")) / "logs"
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_LOG_FILE = _LOG_DIR / "bot.log"
+
+_log_fmt     = "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"
+_log_datefmt = "%Y-%m-%dT%H:%M:%S"
+
+# Rotating file handler — 10 MB per file, keep last 7 files (~70 MB max)
+_file_handler = logging.handlers.RotatingFileHandler(
+    filename    = _LOG_FILE,
+    maxBytes    = 10 * 1024 * 1024,   # 10 MB
+    backupCount = 7,
+    encoding    = "utf-8",
+)
+_file_handler.setFormatter(logging.Formatter(_log_fmt, datefmt=_log_datefmt))
+
+_console_handler = logging.StreamHandler(sys.stdout)
+_console_handler.setFormatter(logging.Formatter(_log_fmt, datefmt=_log_datefmt))
+
 logging.basicConfig(
-    level  = logging.INFO,
-    format = "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt = "%Y-%m-%dT%H:%M:%S",
-    stream = sys.stdout,
+    level    = logging.INFO,
+    handlers = [_console_handler, _file_handler],
 )
 logger = logging.getLogger(__name__)
+logger.info("Log file: %s", _LOG_FILE)
 
 # ── V2 imports ────────────────────────────────────────────────────────────────
 import v2.settings as settings

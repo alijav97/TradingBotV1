@@ -92,16 +92,18 @@ class BotScheduler:
             misfire_grace_time = 30,
         )
 
-        # H1 signal scan — every 2 minutes
-        # Strategy's own time gate (13:00-17:00 UTC) blocks trades outside the
-        # kill-zone window, so frequent scanning is safe and catches setups fast
+        # H1 signal scan — every 2 seconds during the kill-zone window.
+        # _job_scan() exits immediately (no MT5 calls) outside 13:00-17:00 UTC
+        # so the high frequency has zero overhead outside the active window.
+        # 2-second resolution prevents intrabar breakouts being missed between
+        # the old 2-minute polls (a breakout can appear and vanish within 1 bar).
         self._scheduler.add_job(
             func     = lambda: self._job_scan("H1"),
-            trigger  = IntervalTrigger(minutes=2),
+            trigger  = IntervalTrigger(seconds=2),
             id       = "scan_h1",
             name     = "H1 signal scan",
             max_instances = 1,
-            misfire_grace_time = 30,
+            misfire_grace_time = 5,
         )
 
         # H4 signal scan — every 4 hours at :00
@@ -154,6 +156,14 @@ class BotScheduler:
 
     def _job_scan(self, timeframe: str) -> None:
         """Run confluence scan on active instruments for a given timeframe."""
+        # Kill-zone gate — exit immediately outside 13:00-17:00 UTC.
+        # The H1 scan runs every 2 seconds; this check costs ~1 µs so there
+        # is no meaningful overhead when the window is closed.
+        if timeframe == "H1":
+            _now = datetime.now(timezone.utc)
+            if not (13 <= _now.hour < 17):
+                return
+
         symbols = ACTIVE_SYMBOLS if ACTIVE_SYMBOLS else ALL_SYMBOLS
         logger.info("Signal scan starting: %s  instruments=%s", timeframe, symbols)
 
