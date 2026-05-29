@@ -63,13 +63,15 @@ C_ARR   = _c.values
 
 # ── Core simulator ────────────────────────────────────────────────────────────
 def simulate(strategy,
-             trail_atr_mult  = 2.0,
-             adx_threshold   = 20,
+             trail_atr_mult    = 2.0,
+             adx_threshold     = 20,
              use_ema200_filter = False,
-             dynamic_risk    = False):
+             dynamic_risk      = False,
+             flipped_risk      = False):
     """
     use_ema200_filter : skip longs when price < EMA200, skip shorts when price > EMA200
-    dynamic_risk      : risk 3% if ADX > 28, else risk 2%
+    dynamic_risk      : risk 3% if ADX > 28, else 2%   (original — sizes up on strong trend)
+    flipped_risk      : risk 3% if ADX 20-28, else 2%  (sizes up on EARLY trend — better WR)
     """
     balance = float(cfg.STARTING_BALANCE)
     trades  = []
@@ -162,7 +164,12 @@ def simulate(strategy,
                 if sl_d <= 0: continue
 
                 # Dynamic risk
-                risk_pct = (0.03 if (dynamic_risk and adx_now > 28) else cfg.RISK_PCT)
+                if dynamic_risk:
+                    risk_pct = 0.03 if adx_now > 28 else cfg.RISK_PCT          # original: more on strong trend
+                elif flipped_risk:
+                    risk_pct = 0.03 if adx_now <= 28 else cfg.RISK_PCT         # flipped:  more on early trend
+                else:
+                    risk_pct = cfg.RISK_PCT
                 ru   = round(balance * risk_pct, 2)
                 lots = ru / sl_d
                 tp1r = sig.get("tp1_rr", cfg.TP1_RR)
@@ -277,9 +284,14 @@ print("  [C] + EMA200 filter + Dynamic risk (3% when ADX>28, 2% otherwise)...")
 trades_C = simulate(strat, trail_atr_mult=2.0, adx_threshold=20,
                     use_ema200_filter=True, dynamic_risk=True)
 
+print("  [D] + EMA200 filter + FLIPPED risk (3% when ADX 20-28, 2% when ADX>28)...")
+trades_D = simulate(strat, trail_atr_mult=2.0, adx_threshold=20,
+                    use_ema200_filter=True, flipped_risk=True)
+
 sA = stats(trades_A)
 sB = stats(trades_B)
 sC = stats(trades_C)
+sD = stats(trades_D)
 
 # ── Head-to-head summary ──────────────────────────────────────────────────────
 W = 110
@@ -291,31 +303,43 @@ print(f"  {'Version':<42}  {'Trades':>6}  {'WR%':>5}  {'AvgR':>6}  {'PnL$':>8}  
 print(f"  {'-'*(W-2)}")
 
 rows = [
-    ("A  Baseline  (Trail+ADX>20)",           sA),
-    ("B  +EMA200 filter",                      sB),
-    ("C  +EMA200 filter +Dynamic risk",        sC),
+    ("A  Baseline  (Trail+ADX>20)",                    sA),
+    ("B  +EMA200 filter",                              sB),
+    ("C  +EMA200 +DynRisk (3% ADX>28)",               sC),
+    ("D  +EMA200 +FlippedRisk (3% ADX 20-28) [NEW]",  sD),
 ]
 best_pnl = max(s["pnl"] for _, s in rows)
+best_dd  = min(s["max_dd"] for _, s in rows)
 for label, s in rows:
-    tag = "  ← BEST PnL" if s["pnl"] == best_pnl else ""
-    print(f"  {label:<42}  {s['trades']:>6}  {s['wr']:>4.1f}%  {s['avg_r']:>+5.2f}R"
-          f"  {s['pnl']:>+8.2f}  {s['final']:>8.2f}  {s['pct']:>+7.1f}%  {s['max_dd']:>6.1f}%{tag}")
+    tag = ""
+    if s["pnl"] == best_pnl: tag += "  ← BEST PnL"
+    if s["max_dd"] == best_dd: tag += "  ← LOWEST DD"
+    print(f"  {label:<48}  {s['trades']:>6}  {s['wr']:>4.1f}%  {s['avg_r']:>+5.2f}R"
+          f"  {s['pnl']:>+9.2f}  {s['final']:>9.2f}  {s['pct']:>+8.1f}%  {s['max_dd']:>6.1f}%{tag}")
 
 print()
-print("  IMPROVEMENT A→B (EMA200 filter effect):")
+print("  A → B  (EMA200 filter):")
 if sA["trades"] > 0 and sB["trades"] > 0:
-    print(f"    Trades : {sA['trades']} → {sB['trades']} ({sB['trades']-sA['trades']:+d} fewer trades after filter)")
-    print(f"    WR     : {sA['wr']}% → {sB['wr']}%  ({sB['wr']-sA['wr']:+.1f}pp)")
-    print(f"    AvgR   : {sA['avg_r']:+.2f}R → {sB['avg_r']:+.2f}R  ({sB['avg_r']-sA['avg_r']:+.2f}R)")
-    print(f"    PnL    : ${sA['pnl']:+,.2f} → ${sB['pnl']:+,.2f}  ({sB['pnl']-sA['pnl']:+.2f})")
-    print(f"    MaxDD  : {sA['max_dd']}% → {sB['max_dd']}%  ({sB['max_dd']-sA['max_dd']:+.1f}pp)")
-
+    print(f"    Trades {sA['trades']} → {sB['trades']} ({sB['trades']-sA['trades']:+d})  "
+          f"WR {sA['wr']}% → {sB['wr']}% ({sB['wr']-sA['wr']:+.1f}pp)  "
+          f"PnL ${sA['pnl']:+,.0f} → ${sB['pnl']:+,.0f}  "
+          f"MaxDD {sA['max_dd']}% → {sB['max_dd']}% ({sB['max_dd']-sA['max_dd']:+.1f}pp)")
 print()
-print("  IMPROVEMENT B→C (Dynamic risk effect):")
+print("  B → C  (size up on STRONG trend ADX>28):")
 if sB["trades"] > 0 and sC["trades"] > 0:
-    print(f"    PnL    : ${sB['pnl']:+,.2f} → ${sC['pnl']:+,.2f}  ({sC['pnl']-sB['pnl']:+.2f})")
-    print(f"    MaxDD  : {sB['max_dd']}% → {sC['max_dd']}%  ({sC['max_dd']-sB['max_dd']:+.1f}pp)")
-    print(f"    Return : {sB['pct']:+.1f}% → {sC['pct']:+.1f}%")
+    print(f"    PnL ${sB['pnl']:+,.0f} → ${sC['pnl']:+,.0f} ({sC['pnl']-sB['pnl']:+,.0f})  "
+          f"MaxDD {sB['max_dd']}% → {sC['max_dd']}% ({sC['max_dd']-sB['max_dd']:+.1f}pp)")
+print()
+print("  B → D  (size up on EARLY trend ADX 20-28) [NEW]:")
+if sB["trades"] > 0 and sD["trades"] > 0:
+    print(f"    PnL ${sB['pnl']:+,.0f} → ${sD['pnl']:+,.0f} ({sD['pnl']-sB['pnl']:+,.0f})  "
+          f"MaxDD {sB['max_dd']}% → {sD['max_dd']}% ({sD['max_dd']-sB['max_dd']:+.1f}pp)")
+print()
+print("  C vs D  (which dynamic risk is better?):")
+if sC["trades"] > 0 and sD["trades"] > 0:
+    winner = "D (flipped)" if sD["pnl"] > sC["pnl"] else "C (original)"
+    print(f"    C PnL=${sC['pnl']:+,.0f} MaxDD={sC['max_dd']}%  vs  "
+          f"D PnL=${sD['pnl']:+,.0f} MaxDD={sD['max_dd']}%  →  {winner} wins")
 
 # ── EMA200 alignment stats across all trades ──────────────────────────────────
 print()
@@ -349,22 +373,41 @@ if trades_C:
     norm_adx  = [t for t in trades_C if t.get("risk_pct_used", 0.02) <= 0.02]
     print()
     print("=" * W)
-    print("  DYNAMIC RISK BREAKDOWN (Version C)")
+    print("  DYNAMIC RISK BREAKDOWN — C (3% ADX>28) vs D (3% ADX 20-28)")
     print("=" * W)
     if high_adx:
         hw = [t for t in high_adx if t["pnl_usd"]>0]
-        print(f"  ADX>28 (3% risk) : {len(high_adx)} trades  WR={len(hw)/len(high_adx)*100:.1f}%"
+        print(f"  C — ADX>28   (3% risk): {len(high_adx):>3} trades  WR={len(hw)/len(high_adx)*100:.1f}%"
               f"  AvgR={sum(t['r_multiple'] for t in high_adx)/len(high_adx):+.2f}R"
               f"  PnL=${sum(t['pnl_usd'] for t in high_adx):+,.2f}")
     if norm_adx:
         nw = [t for t in norm_adx if t["pnl_usd"]>0]
-        print(f"  ADX 20-28 (2%)   : {len(norm_adx)} trades  WR={len(nw)/len(norm_adx)*100:.1f}%"
+        print(f"  C — ADX20-28 (2% risk): {len(norm_adx):>3} trades  WR={len(nw)/len(norm_adx)*100:.1f}%"
               f"  AvgR={sum(t['r_multiple'] for t in norm_adx)/len(norm_adx):+.2f}R"
               f"  PnL=${sum(t['pnl_usd'] for t in norm_adx):+,.2f}")
 
+    # Version D breakdown
+    if trades_D:
+        d_high = [t for t in trades_D if t.get("risk_pct_used", 0.02) > 0.02]   # ADX 20-28 (3%)
+        d_norm = [t for t in trades_D if t.get("risk_pct_used", 0.02) <= 0.02]  # ADX>28   (2%)
+        print()
+        if d_high:
+            dh = [t for t in d_high if t["pnl_usd"]>0]
+            print(f"  D — ADX20-28 (3% risk): {len(d_high):>3} trades  WR={len(dh)/len(d_high)*100:.1f}%"
+                  f"  AvgR={sum(t['r_multiple'] for t in d_high)/len(d_high):+.2f}R"
+                  f"  PnL=${sum(t['pnl_usd'] for t in d_high):+,.2f}  ← early trend, sized up")
+        if d_norm:
+            dn = [t for t in d_norm if t["pnl_usd"]>0]
+            print(f"  D — ADX>28   (2% risk): {len(d_norm):>3} trades  WR={len(dn)/len(d_norm)*100:.1f}%"
+                  f"  AvgR={sum(t['r_multiple'] for t in d_norm)/len(d_norm):+.2f}R"
+                  f"  PnL=${sum(t['pnl_usd'] for t in d_norm):+,.2f}  ← extended trend, normal size")
+
 # ── Monthly breakdown for the best version ────────────────────────────────────
-best_trades = trades_C if sC["pnl"] >= sB["pnl"] else trades_B
-best_label  = "C (EMA200 + Dynamic Risk)" if sC["pnl"] >= sB["pnl"] else "B (EMA200 Filter)"
+all_versions = [(trades_A, sA, "A (Baseline)"),
+                (trades_B, sB, "B (EMA200 Filter)"),
+                (trades_C, sC, "C (EMA200 + DynRisk)"),
+                (trades_D, sD, "D (EMA200 + FlippedRisk) [NEW]")]
+best_trades, _, best_label = max(all_versions, key=lambda x: x[1]["pnl"])
 monthly_breakdown(best_trades, f"BEST VERSION — {best_label}")
 
 # ── Save best trades to CSV ───────────────────────────────────────────────────
