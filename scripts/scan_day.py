@@ -49,6 +49,7 @@ try:
     from v2.settings import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
     import v2.connectors.mt5_connector as mt5_conn
     from v2.signals.confluence_engine import ConfluenceEngine
+    from v2.signals.entry_checklist import validate_entry
 
     ok = mt5_conn.connect(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
     if not ok:
@@ -151,8 +152,8 @@ try:
     all_bar_indices = df_h1.index.tolist()
     signals_found   = []
 
-    print(f"  {'Bar UTC':20s}  {'Dir':6s}  {'Signal':8s}  {'Score':6s}  Reason")
-    print(f"  {'─'*85}")
+    print(f"  {'Bar UTC':20s}  {'Dir':6s}  {'Score':5s}  {'Engine':8s}  {'Checklist':12s}  Detail")
+    print(f"  {'─'*100}")
 
     for df_idx, bar_row in kz_bars.iterrows():
         pos       = all_bar_indices.index(df_idx)
@@ -174,24 +175,45 @@ try:
             tp1     = result.get("tp1_price", 0)
             tp2     = result.get("tp2_price", 0)
 
+            engine_str   = "SIGNAL" if signal else "no"
+            checklist_str = "—"
+            detail        = (blocked or "score too low")[:55] if not signal else (
+                            f"entry={entry:.3f} sl={sl:.3f} tp1={tp1:.3f} tp2={tp2:.3f}")
+
+            # ── Run entry checklist on signals (mirrors live bot) ─────────────
             if signal:
-                print(f"  {bar_str:20s}  {direction.upper():6s}  {'SIGNAL':8s}  {score:5.1f}  "
-                      f"entry={entry:.3f}  sl={sl:.3f}  tp1={tp1:.3f}  tp2={tp2:.3f}")
-                # Print signal reasons
+                sig_dict = {
+                    "symbol":      "WTI",
+                    "direction":   direction,
+                    "entry_price": entry,
+                    "stop_loss":   sl,
+                    "tp1_price":   tp1,
+                    "tp2_price":   tp2,
+                    "score":       score,
+                    "strategy":    result.get("strategy", "ny_momentum_wti"),
+                }
+                # For historical dates skip live news check; for today use real news filter
+                chk = validate_entry(sig_dict, window, skip_news=is_historical)
+                if chk["passed"]:
+                    checklist_str = "✓ PASS"
+                    signals_found.append({
+                        "bar_idx": pos, "bar_time": bar_time,
+                        "direction": direction,
+                        "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
+                        "score": score,
+                    })
+                else:
+                    checklist_str = f"✗ {chk['failed_at']}"
+                    detail        = f"BLOCKED: {chk['failed_at']} — {list(chk['checks'].values())[list(chk['checks'].keys()).index(chk['failed_at'])]['reason'][:60]}"
+
+            print(f"  {bar_str:20s}  {direction.upper():6s}  {score:5.1f}  {engine_str:8s}  {checklist_str:12s}  {detail}")
+
+            if signal:
                 reasons = result.get("reasons") or []
                 if isinstance(reasons, list):
                     for r in reasons:
                         if r:
-                            print(f"  {'':55s}→ {r}")
-                signals_found.append({
-                    "bar_idx": pos, "bar_time": bar_time,
-                    "direction": direction,
-                    "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
-                    "score": score,
-                })
-            else:
-                short_reason = (blocked or "score too low")[:55]
-                print(f"  {bar_str:20s}  {direction.upper():6s}  {'no':8s}  {score:5.1f}  {short_reason}")
+                            print(f"  {'':60s}→ {r}")
 
     print()
 
