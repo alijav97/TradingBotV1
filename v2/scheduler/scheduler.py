@@ -92,16 +92,30 @@ class BotScheduler:
             misfire_grace_time = 30,
         )
 
-        # H1 signal scan — every 2 seconds during the kill-zone window.
-        # _job_scan() exits immediately (no MT5 calls) outside 13:00-17:00 UTC
-        # so the high frequency has zero overhead outside the active window.
-        # 2-second resolution prevents intrabar breakouts being missed between
-        # the old 2-minute polls (a breakout can appear and vanish within 1 bar).
+        # H1 scan — TWO jobs with different intervals and gates:
+        #
+        # 1) Background (outside kill-zone): every 5 minutes
+        #    Keeps London bars (08:00-13:00 UTC) fresh so the strategy has a
+        #    valid range ready the moment the kill-zone opens at 13:00 UTC.
+        #    Skips when kill-zone is active (the fast job handles that).
+        #
+        # 2) Kill-zone (inside 13:00-17:00 UTC): every 2 seconds
+        #    Catches intrabar breakouts — a London-low/high break can appear
+        #    and disappear within a single bar, so 2-minute polling was too slow.
+        #    Skips immediately (no MT5 call) outside the kill-zone window.
         self._scheduler.add_job(
-            func     = lambda: self._job_scan("H1"),
+            func     = self._job_scan_background,
+            trigger  = IntervalTrigger(minutes=5),
+            id       = "scan_h1_background",
+            name     = "H1 background scan (London tracking)",
+            max_instances = 1,
+            misfire_grace_time = 60,
+        )
+        self._scheduler.add_job(
+            func     = self._job_scan_killzone,
             trigger  = IntervalTrigger(seconds=2),
-            id       = "scan_h1",
-            name     = "H1 signal scan",
+            id       = "scan_h1_killzone",
+            name     = "H1 kill-zone scan (2s)",
             max_instances = 1,
             misfire_grace_time = 5,
         )
@@ -154,16 +168,24 @@ class BotScheduler:
         except Exception as exc:
             logger.error("Monitor job error: %s", exc)
 
+    def _job_scan_background(self) -> None:
+        """Every-5-min scan — runs OUTSIDE kill-zone to track London session.
+        Hands off to the 2-second job once the kill-zone opens."""
+        _now = datetime.now(timezone.utc)
+        if 13 <= _now.hour < 17:
+            return   # kill-zone job handles this window
+        self._job_scan("H1")
+
+    def _job_scan_killzone(self) -> None:
+        """Every-2-second scan — runs ONLY during kill-zone (13:00-17:00 UTC).
+        Catches intrabar breakouts that the 5-min scan would miss."""
+        _now = datetime.now(timezone.utc)
+        if not (13 <= _now.hour < 17):
+            return   # outside window — exit immediately, no MT5 call
+        self._job_scan("H1")
+
     def _job_scan(self, timeframe: str) -> None:
         """Run confluence scan on active instruments for a given timeframe."""
-        # Kill-zone gate — exit immediately outside 13:00-17:00 UTC.
-        # The H1 scan runs every 2 seconds; this check costs ~1 µs so there
-        # is no meaningful overhead when the window is closed.
-        if timeframe == "H1":
-            _now = datetime.now(timezone.utc)
-            if not (13 <= _now.hour < 17):
-                return
-
         symbols = ACTIVE_SYMBOLS if ACTIVE_SYMBOLS else ALL_SYMBOLS
         logger.info("Signal scan starting: %s  instruments=%s", timeframe, symbols)
 
