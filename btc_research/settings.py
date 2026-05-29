@@ -26,24 +26,34 @@ MT5_SERVER_UTC_OFFSET = 3
 #   13-17 UTC — 38.2% WR  (WTI assumption was wrong for BTC)
 #
 # Asia Night session (00-04 UTC) overall: 46.9% WR, +$15,634 total PnL — BEST
-# Session scanner best single hours: 02:00 UTC (57.1% WR) and 03:00 UTC (52.6% WR)
-# Optimizer best window: 01-05 UTC → 159 trades over 2yr @ 43.4% WR, 6.6 trades/month
-# This 4-hour block captures late Tokyo close + pre-London positioning + early London open.
+# Combined strategy session scan results (run_combined_session_scan):
 #
-# UAE time equivalent: 05:00-09:00 AM UAE
-KZ_START_UTC = 1
-KZ_END_UTC   = 5
+#   05:00 UTC — 46.2% WR, +0.19R, $+14,855  ← 2nd best quality
+#   06:00 UTC — 46.6% WR, +0.36R, $+26,124  ← BEST quality (highest WR + Avg R)
+#   04:00 UTC — 35.5% WR, -0.04R, $-2,242   ← AVOID (drags Asia Open block down)
+#   07:00 UTC — 41.1% WR, +0.19R, $+8,026   ← decent but weaker than 05/06
+#
+# Optimal window: 05:00-07:00 UTC (just 2 hours — pure quality)
+#   ~145+146 = ~291 trades/2yr = 12 trades/month
+#   Expected WR ~46%+ after filtering
+#   This is late Asian session close + early European pre-market positioning
+#
+# UAE time equivalent: 09:00-11:00 AM UAE
+KZ_START_UTC = 5
+KZ_END_UTC   = 7
 
 # ── Morning range window (range forms BEFORE kill-zone entry) ─────────────────
-# For 01-05 UTC kill-zone, range forms during prior US late session / early Asia: 20:00-01:00 UTC
+# For 05-07 UTC kill-zone, range forms during Asia Night / early Asia session: 22:00-05:00 UTC
 # Using 6-bar lookback in strategy (last 6 bars before signal bar) is cleaner
 # than a fixed session window here, so MR_START/END are kept for documentation.
-MR_START_UTC = 20   # prior day late US / early Asia
-MR_END_UTC   = 1    # just before kill-zone opens
+MR_START_UTC = 22   # late US / early Asia Night
+MR_END_UTC   = 5    # just before kill-zone opens
 
 # ── Risk & position sizing ────────────────────────────────────────────────────
 STARTING_BALANCE = 10_000   # USD — backtest starting capital
-RISK_PCT         = 0.03     # 3% risk per trade (matches WTI bot)
+RISK_PCT         = 0.02     # 2% risk per trade
+                             # (reduced from 3% — BTC at 43-46% WR needs lower risk
+                             #  to keep MaxDD at ~25% vs 45%+ at 3%)
 TP1_RR           = 2.0      # Take-profit 1 at 1:2 R:R → partial close + SL to BE
 TP2_RR           = 5.0      # Take-profit 2 at 1:5 R:R → full close
 MAX_HOLD_BARS    = 96       # Force-close after 96 H1 bars (4 days)
