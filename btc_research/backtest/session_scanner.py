@@ -379,3 +379,176 @@ def run_session_scan(
         print("  Then update KZ_START_UTC / KZ_END_UTC in btc_research/settings.py")
         print("  and re-run: python btc_research/run_backtest.py")
     print(SEP)
+
+
+# ── Strategy-aware session scanner ───────────────────────────────────────────
+
+def run_combined_session_scan(
+    df_btc:    pd.DataFrame,
+    df_gold:   pd.DataFrame,
+    df_nas:    pd.DataFrame,
+    strategy:  "BTCStrategy | None" = None,
+) -> None:
+    """
+    Scan all 24 hours + session blocks using any BTCStrategy (default: CombinedStrategy).
+    Unlike run_session_scan() which uses the old confluence engine, this function uses
+    the actual strategy classes — so results reflect the REAL combined strategy behaviour.
+
+    For CombinedStrategy, selective IM filtering is applied automatically
+    (only Volatility Breakout sub-strategy gets the Gold/NAS gate).
+
+    Usage:
+        from btc_research.backtest.session_scanner import run_combined_session_scan
+        run_combined_session_scan(df_btc, df_gold, df_nas)
+    """
+    from btc_research.strategies.combined import CombinedStrategy, _FILTER_STRATEGIES
+    from btc_research.backtest.strategy_comparison import _simulate, _stats
+
+    if strategy is None:
+        strategy = CombinedStrategy(atr_multiplier=1.2, close_zone=0.45, range_bars=6)
+
+    is_combined = "Combined" in strategy.name
+    filter_names = _FILTER_STRATEGIES if is_combined else None
+
+    SEP  = "=" * 72
+    LINE = "-" * 72
+
+    print()
+    print(SEP)
+    print(f"SESSION SCAN — {strategy.name}")
+    if is_combined:
+        print("  IM filter: Volatility sub-strategy only (Morning Range + Swing = unfiltered)")
+    print(SEP)
+    print("Testing all 24 hours and session blocks... (may take a few minutes)")
+    print()
+
+    # ── 1. Hour-by-hour ───────────────────────────────────────────────────────
+    hour_results: list[dict] = []
+    for h in range(24):
+        trades = _simulate(
+            strategy, df_btc, df_gold, df_nas,
+            use_intermarket=False,
+            filter_strategy_names=filter_names,
+            allowed_hours={h},
+        )
+        if not trades:
+            hour_results.append({
+                "hour": h, "trades": 0, "wr": 0.0,
+                "avg_pnl": 0.0, "total_pnl": 0.0, "avg_r": 0.0,
+            })
+            print(f"  Hour {h:02d}:00 UTC  — 0 trades", end="\r")
+            continue
+        df_t = pd.DataFrame(trades)
+        wr   = (df_t["pnl_usd"] > 0).mean() * 100
+        hour_results.append({
+            "hour":      h,
+            "trades":    len(df_t),
+            "wr":        round(wr, 1),
+            "avg_pnl":   round(df_t["pnl_usd"].mean(), 2),
+            "total_pnl": round(df_t["pnl_usd"].sum(), 2),
+            "avg_r":     round(df_t["r_multiple"].mean(), 2),
+        })
+        print(f"  Hour {h:02d}:00 UTC  done  ({len(df_t)} trades)", end="\r")
+
+    print(" " * 65, end="\r")
+
+    # Heat map
+    sessions_map = {
+        range(0,  4):  "Asia Night ",
+        range(4,  8):  "Asia Open  ",
+        range(8,  12): "EU Session ",
+        range(12, 14): "EU/US Cross",
+        range(13, 17): "US Open    ",
+        range(17, 21): "US Mid     ",
+        range(21, 24): "US Late    ",
+    }
+
+    def _session_label(hour: int) -> str:
+        for r, label in sessions_map.items():
+            if hour in r:
+                return label
+        return "           "
+
+    print(f"{'UTC Hour':<12} {'Session':<14} {'Trades':>7} {'Win%':>7} "
+          f"{'Avg R':>7} {'Avg PnL':>10} {'Total PnL':>12}")
+    print(LINE)
+    for row in hour_results:
+        h   = int(row["hour"])
+        lbl = _session_label(h)
+        bar = "#" * min(int(row["wr"] / 5), 20) if row["trades"] > 0 else "—"
+        print(f"  {h:02d}:00 UTC  [{lbl}] "
+              f"{int(row['trades']):>5} "
+              f"{row['wr']:>6.1f}% "
+              f"{row['avg_r']:>+6.2f}R "
+              f"${row['avg_pnl']:>+8.2f} "
+              f"${row['total_pnl']:>+10.2f}  {bar}")
+
+    # ── 2. Session block comparison ───────────────────────────────────────────
+    print()
+    print(SEP)
+    print("SESSION BLOCK COMPARISON")
+    print(SEP)
+    print(f"{'Session':<25} {'Trades':>7} {'WR%':>7} {'Avg R':>7} "
+          f"{'Avg PnL':>10} {'Total PnL':>12} {'MaxDD':>8}")
+    print(LINE)
+
+    block_results = []
+    for name, (start, end) in SESSION_BLOCKS.items():
+        hours  = set(range(start, end))
+        trades = _simulate(
+            strategy, df_btc, df_gold, df_nas,
+            use_intermarket=False,
+            filter_strategy_names=filter_names,
+            allowed_hours=hours,
+        )
+        if not trades:
+            block_results.append({"session": name, "trades": 0,
+                                   "wr": 0.0, "total_pnl": 0.0, "avg_r": 0.0})
+            print(f"  {name:<25} {'0':>7}")
+            continue
+        st = _stats(trades)
+        block_results.append({"session": name, **st})
+        print(f"  {name:<25} {st['trades']:>7} {st['wr']:>6.1f}% "
+              f"{st['avg_r']:>+6.2f}R "
+              f"${st['avg_pnl']:>+8.2f} "
+              f"${st['total_pnl']:>+10.2f} "
+              f"{st['max_dd']:>7.1f}%")
+
+    # ── 3. Recommendation ────────────────────────────────────────────────────
+    valid = [b for b in block_results if b.get("trades", 0) >= 10]
+    if valid:
+        best_wr  = max(valid, key=lambda x: x["wr"])
+        best_pnl = max(valid, key=lambda x: x["total_pnl"])
+        best_r   = max(valid, key=lambda x: x["avg_r"])
+        # Composite score: normalise each metric and sum
+        max_wr   = max(b["wr"] for b in valid) or 1
+        max_pnl  = max(b["total_pnl"] for b in valid) or 1
+        max_r    = max(b["avg_r"] for b in valid) or 1
+        for b in valid:
+            b["composite"] = (b["wr"] / max_wr * 0.4 +
+                              b["total_pnl"] / max_pnl * 0.4 +
+                              b["avg_r"] / max_r * 0.2)
+        best_overall = max(valid, key=lambda x: x["composite"])
+
+        print()
+        print(SEP)
+        print("RECOMMENDATION")
+        print(SEP)
+        print(f"  Best WR        : {best_wr['session'].strip():<25} "
+              f"({best_wr['wr']:.1f}% WR, {best_wr['trades']} trades)")
+        print(f"  Best Total PnL : {best_pnl['session'].strip():<25} "
+              f"(${best_pnl['total_pnl']:+,.2f}, {best_pnl['trades']} trades)")
+        print(f"  Best Avg R     : {best_r['session'].strip():<25} "
+              f"({best_r['avg_r']:+.2f}R per trade)")
+        print()
+        print(f"  ★ BEST OVERALL (WR 40% + PnL 40% + AvgR 20%) :")
+        print(f"      {best_overall['session'].strip()}")
+        print(f"      {best_overall['trades']} trades  |  "
+              f"WR={best_overall['wr']:.1f}%  |  "
+              f"Avg R={best_overall['avg_r']:+.2f}  |  "
+              f"Total PnL=${best_overall['total_pnl']:+,.2f}  |  "
+              f"MaxDD={best_overall.get('max_dd', 0):.1f}%")
+        print()
+        print("  Update KZ_START_UTC / KZ_END_UTC in btc_research/settings.py")
+        print("  then re-run: python btc_research/run_backtest.py --compare")
+    print(SEP)

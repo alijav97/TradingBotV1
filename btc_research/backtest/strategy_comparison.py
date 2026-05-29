@@ -41,7 +41,10 @@ from btc_research.factors.nasdaq_factor        import compute_nasdaq_factor
 from btc_research.factors.btc_momentum        import compute_btc_momentum
 
 
-# All strategies to compare (Combined uses optimized params from optimizer run)
+# All strategies to compare.
+# Combined uses optimized params (atr_multiplier=1.2, close_zone=0.45 from optimizer).
+# In the "filtered" column, Combined uses SELECTIVE filtering (only Volatility sub-strategy
+# gets the Gold+NAS gate; Swing Level and Morning Range run unfiltered — matches backtest findings).
 ALL_STRATEGIES: list[BTCStrategy] = [
     MorningRangeBreakout(range_bars=6),
     EMATrendFollow(),
@@ -78,23 +81,28 @@ def _intermarket_score(
 
 
 def _simulate(
-    strategy:           BTCStrategy,
-    df_btc:             pd.DataFrame,
-    df_gold:            pd.DataFrame,
-    df_nas:             pd.DataFrame,
-    use_intermarket:    bool = True,
-    intermarket_thresh: float = -1.0,  # block if IM score <= this
-    allowed_hours:      set[int] | None = None,
+    strategy:              BTCStrategy,
+    df_btc:                pd.DataFrame,
+    df_gold:               pd.DataFrame,
+    df_nas:                pd.DataFrame,
+    use_intermarket:       bool = True,
+    intermarket_thresh:    float = -1.0,  # block if IM score <= this
+    allowed_hours:         set[int] | None = None,
+    filter_strategy_names: set[str] | None = None,
 ) -> list[dict]:
     """
     Run a single strategy simulation over the full dataset.
 
     Args:
-        strategy           : the BTCStrategy to test
-        df_btc/gold/nas    : price data
-        use_intermarket    : whether to apply Gold/NAS filter
-        intermarket_thresh : minimum IM score to allow a trade
-        allowed_hours      : set of UTC hours to trade in (None = use KZ settings)
+        strategy              : the BTCStrategy to test
+        df_btc/gold/nas       : price data
+        use_intermarket       : whether to apply Gold/NAS filter (ignored when
+                                filter_strategy_names is provided)
+        intermarket_thresh    : minimum IM score to allow a trade
+        allowed_hours         : set of UTC hours to trade in (None = use KZ settings)
+        filter_strategy_names : if provided, ONLY apply IM filter to signals whose
+                                strategy_used name is in this set.  All others pass
+                                through unfiltered.  Overrides use_intermarket.
 
     Returns list of closed trade dicts.
     """
@@ -189,9 +197,18 @@ def _simulate(
                 if sl <= 0 or abs(entry - sl) <= 0:
                     continue
 
-                # Inter-market filter (optional)
+                # Inter-market filter — normal OR selective mode
                 im_score = 0.0
-                if use_intermarket and not df_gold.empty and not df_nas.empty:
+                sig_strategy_name = sig.get("strategy_used") or strategy.name
+
+                if filter_strategy_names is not None:
+                    # Selective mode: only filter signals from named sub-strategies
+                    apply_filter = sig_strategy_name in filter_strategy_names
+                else:
+                    # Normal mode: apply to all signals based on use_intermarket flag
+                    apply_filter = use_intermarket
+
+                if apply_filter and not df_gold.empty and not df_nas.empty:
                     im_score = _intermarket_score(df_btc, df_gold, df_nas, bar_time, direction)
                     if im_score <= intermarket_thresh:
                         continue   # inter-market factors oppose this trade
@@ -298,7 +315,9 @@ def run_comparison(
     all_results: list[dict] = []
 
     for strat in strategies:
-        print(f"\nTesting: {strat.name}...", end=" ", flush=True)
+        is_combined = "Combined" in strat.name
+        filter_note = " [selective filter]" if is_combined else ""
+        print(f"\nTesting: {strat.name}{filter_note}...", end=" ", flush=True)
 
         # A. Without inter-market filter
         trades_raw = _simulate(strat, df_btc, df_gold, df_nas,
@@ -307,12 +326,22 @@ def run_comparison(
         stats_raw  = _stats(trades_raw)
 
         # B. With inter-market filter
-        trades_fil = _simulate(strat, df_btc, df_gold, df_nas,
-                               use_intermarket=True,
-                               allowed_hours=allowed_hours)
+        # For CombinedStrategy: use SELECTIVE filter — only Volatility sub-strategy
+        # gets the Gold/NAS gate (Morning Range and Swing Level perform better without it)
+        if is_combined:
+            from btc_research.strategies.combined import _FILTER_STRATEGIES
+            trades_fil = _simulate(strat, df_btc, df_gold, df_nas,
+                                   use_intermarket=False,   # overridden by filter_strategy_names
+                                   filter_strategy_names=_FILTER_STRATEGIES,
+                                   allowed_hours=allowed_hours)
+        else:
+            trades_fil = _simulate(strat, df_btc, df_gold, df_nas,
+                                   use_intermarket=True,
+                                   allowed_hours=allowed_hours)
         stats_fil  = _stats(trades_fil)
 
-        print(f"done  ({stats_raw['trades']} raw / {stats_fil['trades']} filtered trades)")
+        filter_label = "selective" if is_combined else "filtered"
+        print(f"done  ({stats_raw['trades']} raw / {stats_fil['trades']} {filter_label} trades)")
 
         all_results.append({
             "strategy":     strat.name,
@@ -325,7 +354,8 @@ def run_comparison(
     # ── Print comparison tables ───────────────────────────────────────────────
     for label, key, trades_key in [
         ("WITHOUT inter-market filter (pure strategy signal)", "raw",      "raw_trades"),
-        ("WITH inter-market filter (Gold + NAS100)",           "filtered", "filtered_trades"),
+        ("WITH inter-market filter  [Combined = selective: only Volatility sub-strategy filtered]",
+         "filtered", "filtered_trades"),
     ]:
         print()
         print(f"{'─'*90}")

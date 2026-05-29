@@ -49,6 +49,10 @@ def main() -> None:
                         help="Override MIN_CONFLUENCE_SCORE (default 3.0)")
     parser.add_argument("--scan-sessions", action="store_true",
                         help="Run session analysis to find the best trading window")
+    parser.add_argument("--scan-combined", action="store_true",
+                        help="Run session scan using the REAL Combined strategy classes "
+                             "(Volatility+Swing+MorningRange with selective IM filter). "
+                             "More accurate than --scan-sessions which uses the old confluence engine.")
     parser.add_argument("--compare", action="store_true",
                         help="Compare all 5 strategies head-to-head (with & without IM filter)")
     parser.add_argument("--optimize", choices=["volatility", "morning_range", "both"],
@@ -71,6 +75,25 @@ def main() -> None:
           f"MaxHold={_settings.MAX_HOLD_BARS}h")
     print("=" * 65)
     print()
+
+    # ── Combined strategy session scan ───────────────────────────────────────
+    if args.scan_combined:
+        print("MODE: Combined Strategy Session Scanner")
+        print("Using real strategy classes (Volatility + Swing Level + Morning Range)")
+        print("Selective IM filter: only Volatility sub-strategy gets Gold/NAS gate")
+        print()
+        data = fetch_all(use_cache=True, force_refresh=args.refresh)
+        df_btc  = data.get(BTC_SYMBOL,  __import__("pandas").DataFrame())
+        df_gold = data.get(GOLD_SYMBOL, __import__("pandas").DataFrame())
+        df_nas  = data.get(NAS_SYMBOL,  __import__("pandas").DataFrame())
+        if df_btc.empty:
+            print("ERROR: No BTCUSD data. Check MT5 connection.")
+            sys.exit(1)
+        from btc_research.backtest.session_scanner import run_combined_session_scan
+        run_combined_session_scan(df_btc, df_gold, df_nas)
+        print("\nOnce you see the best session, update KZ_START_UTC / KZ_END_UTC")
+        print("in btc_research/settings.py, then re-run: --compare")
+        sys.exit(0)
 
     # ── Session scanner mode ──────────────────────────────────────────────────
     if args.scan_sessions:
