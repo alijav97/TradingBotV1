@@ -51,6 +51,9 @@ def main() -> None:
                         help="Run session analysis to find the best trading window")
     parser.add_argument("--compare", action="store_true",
                         help="Compare all 5 strategies head-to-head (with & without IM filter)")
+    parser.add_argument("--optimize", choices=["volatility", "morning_range", "both"],
+                        default=None,
+                        help="Optimize parameters for top strategies to find more trades")
     args = parser.parse_args()
 
     # Apply score override before any imports of confluence module
@@ -85,6 +88,22 @@ def main() -> None:
                          min_score=_settings.MIN_CONFLUENCE_SCORE)
         print("\nOnce you see the best session, update KZ_START_UTC / KZ_END_UTC")
         print("in btc_research/settings.py, then run the full backtest.")
+        sys.exit(0)
+
+    # ── Optimizer mode ────────────────────────────────────────────────────────
+    if args.optimize:
+        print(f"MODE: Parameter Optimizer — {args.optimize}")
+        print("Testing ATR multipliers × close zones × session windows...")
+        print("This may take 3-5 minutes.\n")
+        data = fetch_all(use_cache=True, force_refresh=args.refresh)
+        df_btc  = data.get(BTC_SYMBOL,  __import__("pandas").DataFrame())
+        df_gold = data.get(GOLD_SYMBOL, __import__("pandas").DataFrame())
+        df_nas  = data.get(NAS_SYMBOL,  __import__("pandas").DataFrame())
+        if df_btc.empty:
+            print("ERROR: No BTCUSD data.")
+            sys.exit(1)
+        from btc_research.backtest.optimizer import run_optimizer
+        run_optimizer(df_btc, df_gold, df_nas, strategy=args.optimize)
         sys.exit(0)
 
     # ── Strategy comparison mode ──────────────────────────────────────────────
