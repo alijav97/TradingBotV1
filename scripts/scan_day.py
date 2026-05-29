@@ -10,8 +10,13 @@ Run from project root:
 """
 import sys
 import os
-sys.path.insert(0, r"C:\Temp\TradingBotV1")
-os.chdir(r"C:\Temp\TradingBotV1")
+from pathlib import Path
+
+# Resolve project root dynamically — works on both VPS (C:\Temp\TradingBotV1)
+# and local dev (C:\Users\...\Downloads\TradingBotV1)
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
+sys.path.insert(0, _PROJECT_ROOT)
+os.chdir(_PROJECT_ROOT)
 
 from datetime import datetime, timezone, date as date_type
 import pandas as pd
@@ -27,8 +32,12 @@ else:
     target_date = datetime.now(timezone.utc).date()
 
 now_utc      = datetime.now(timezone.utc)
-is_today     = (target_date == now_utc.date())
 is_future    = (target_date > now_utc.date())
+# Treat as historical if: past date, OR same UTC date but kill-zone already closed
+# (17:00 UTC = session end). This prevents running session-quality checks against
+# the current wall clock when reviewing earlier bars from today's closed session.
+_kz_closed_today = (target_date == now_utc.date()) and (now_utc.hour >= 17)
+is_today      = (target_date == now_utc.date()) and not _kz_closed_today
 is_historical = not is_today and not is_future
 
 print("=" * 70)
@@ -294,13 +303,14 @@ try:
             n_, t_, p_, label_, tp1_was = outcome
             diff    = (p_ - entry) if is_long else (entry - p_)
             r_val   = round(diff / sl_dist, 2) if sl_dist else 0
-            pnl_2   = round(1500 * 0.02 * r_val, 2) if r_val > 0 else round(-1500 * 0.02, 2)
-            pnl_3   = round(1500 * 0.03 * r_val, 2) if r_val > 0 else round(-1500 * 0.03, 2)
+            WTI_BALANCE = 500   # WTI paper trading account
+            pnl_2   = round(WTI_BALANCE * 0.02 * r_val, 2) if r_val > 0 else round(-WTI_BALANCE * 0.02, 2)
+            pnl_3   = round(WTI_BALANCE * 0.03 * r_val, 2) if r_val > 0 else round(-WTI_BALANCE * 0.03, 2)
 
             print(f"\n  Result   : {label_}")
             print(f"  Exit     : {p_:.3f}  (bar {n_}, ~{t_} UTC)")
             print(f"  R        : {r_val:+.2f}R")
-            print(f"  P&L 2%/3%: ${pnl_2:+.2f} / ${pnl_3:+.2f}  (on $1,500 account)")
+            print(f"  P&L 2%/3%: ${pnl_2:+.2f} / ${pnl_3:+.2f}  (on ${WTI_BALANCE} account)")
             print()
 
     elif is_historical and not signals_found:
