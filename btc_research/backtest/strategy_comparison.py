@@ -463,31 +463,40 @@ def run_comparison(
             if not t_list:
                 print(f"  {r['strategy']}: no trades")
                 continue
-            df_t = pd.DataFrame(t_list)
+            df_t   = pd.DataFrame(t_list)
+            total  = len(df_t)
             if "signal_reason" not in df_t.columns:
+                print(f"  {r['strategy']} ({total} trades): signal_reason column missing")
                 continue
-            # signal_reason stores strategy name for Combined
-            # We stored it in sig["reason"] — but strategy_used is in signal_reason
-            # Actually we need to check — the combined strategy adds strategy_used to the result
-            # which gets stored in open_trade["signal_reason"] via sig.get("reason", "")
-            # The combined strategy sets result["strategy_used"] but not result["reason"]
-            # Let's just show what we have
-            total = len(df_t)
-            if "signal_reason" in df_t.columns:
-                by_sub = df_t["signal_reason"].value_counts()
-                print(f"  {r['strategy']} ({total} trades):")
-                for sub_name, cnt in by_sub.items():
-                    wr_sub = df_t[df_t["signal_reason"] == sub_name]["pnl_usd"]
-                    wins_sub = (wr_sub > 0).sum()
-                    wr_pct = wins_sub / cnt * 100 if cnt > 0 else 0
-                    avg_r_sub = df_t[df_t["signal_reason"] == sub_name]["r_multiple"].mean()
-                    label = sub_name if sub_name else "unknown"
-                    # Show TP config for this sub-strategy
+
+            # Sort ascending so highest-count sub-strategy appears last (visible at bottom of terminal)
+            by_sub = df_t["signal_reason"].value_counts(ascending=True)
+
+            # Only show groups that look like strategy names (count >= 5)
+            # Filter out any stray unique reason strings
+            known = {name for name in by_sub.index
+                     if any(kw in name for kw in
+                            ("Breakout", "Break", "Follow", "Reversion", "Range", "Combined"))}
+            by_sub_clean = by_sub[by_sub.index.isin(known)] if known else by_sub
+
+            print(f"  {r['strategy']} ({total} trades):")
+            print(f"  {'Sub-Strategy':<32} {'Trades':>7} {'WR%':>7} {'Avg R':>8} {'TP Config':>18}")
+            print(f"  {'-'*75}")
+            for sub_name, cnt in by_sub_clean.items():
                 sub_rows = df_t[df_t["signal_reason"] == sub_name]
-                tp1_used = sub_rows["tp1_rr"].iloc[0] if "tp1_rr" in sub_rows.columns and len(sub_rows) > 0 else "?"
-                tp2_used = sub_rows["tp2_rr"].iloc[0] if "tp2_rr" in sub_rows.columns and len(sub_rows) > 0 else "?"
-                tp_str   = f"TP1={tp1_used}R/TP2={tp2_used}R" if tp1_used != "?" else ""
-                print(f"    {label:<30}: {cnt:>4} trades  WR={wr_pct:>5.1f}%  AvgR={avg_r_sub:>+5.2f}R  {tp_str}")
+                wr_pct   = (sub_rows["pnl_usd"] > 0).mean() * 100
+                avg_r    = sub_rows["r_multiple"].mean()
+                tp1_v    = sub_rows["tp1_rr"].iloc[0] if "tp1_rr" in sub_rows.columns else "?"
+                tp2_v    = sub_rows["tp2_rr"].iloc[0] if "tp2_rr" in sub_rows.columns else "?"
+                tp_str   = f"TP1={tp1_v}R / TP2={tp2_v}R" if tp1_v != "?" else ""
+                pnl_sub  = sub_rows["pnl_usd"].sum()
+                print(f"  {sub_name:<32} {cnt:>7} {wr_pct:>6.1f}% {avg_r:>+7.2f}R "
+                      f"  {tp_str:<18}  PnL=${pnl_sub:>+8,.2f}")
+            print(f"  {'─'*75}")
+            print(f"  {'TOTAL':<32} {total:>7} "
+                  f"{(df_t['pnl_usd']>0).mean()*100:>6.1f}% "
+                  f"{df_t['r_multiple'].mean():>+7.2f}R  "
+                  f"PnL=${df_t['pnl_usd'].sum():>+8,.2f}")
 
     print(SEP)
     print()

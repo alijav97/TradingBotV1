@@ -176,9 +176,10 @@ class SwingLevelBreak(BTCStrategy):
             "entry":   round(bar_close, 2),
             "sl":      round(sl_val, 2),
             "reason":  reason,
-            # Per-strategy TP levels — structural breaks have a natural measured move
-            # (swing-to-swing distance). Conservative TP2 at 3R; tight TP1 at 1.5R
-            # because price often retests the broken level before continuing.
+            # Per-strategy TP levels — structural breaks have a natural measured move.
+            # TP1=1.5R: tight entry protection (price often retests broken level).
+            # TP2=5R: allow the structural move to fully play out. Previous 3R was
+            # too conservative — it capped avg R at only +0.11R despite 45.6% WR.
             "tp1_rr":  1.5,
-            "tp2_rr":  3.0,
+            "tp2_rr":  5.0,
         }
