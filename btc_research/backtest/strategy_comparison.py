@@ -317,7 +317,14 @@ def run_comparison(
     print(SEP)
     print("BTC STRATEGY COMPARISON")
     print(f"Session : UTC {min(allowed_hours):02d}:00 - {max(allowed_hours)+1:02d}:00")
-    print(f"Risk    : {RISK_PCT*100:.0f}% per trade  |  TP1={TP1_RR:.0f}R  TP2={TP2_RR:.0f}R  MaxHold={MAX_HOLD_BARS}h")
+    print(f"Risk    : {RISK_PCT*100:.0f}% per trade  |  MaxHold={MAX_HOLD_BARS}h")
+    print(f"TP/SL   : PER-STRATEGY (overrides global defaults)")
+    print(f"          Volatility Breakout  → TP1=2R  TP2=9R  (explosive momentum run)")
+    print(f"          Swing Level Break    → TP1=1.5R TP2=3R  (conservative measured move)")
+    print(f"          Morning Range Break  → TP1=2R  TP2=5R  (range expansion)")
+    print(f"          EMA Trend Follow     → TP1=2R  TP2=6R  (trend continuation)")
+    print(f"          RSI Mean Reversion   → TP1=1.5R TP2=2.5R (counter-trend fade)")
+    print(f"          Global defaults      → TP1={TP1_RR:.0f}R  TP2={TP2_RR:.0f}R  (fallback only)")
     print(SEP)
 
     all_results: list[dict] = []
@@ -334,21 +341,23 @@ def run_comparison(
         stats_raw  = _stats(trades_raw)
 
         # B. With inter-market filter
-        # For CombinedStrategy: use SELECTIVE filter — only Volatility sub-strategy
-        # gets the Gold/NAS gate (Morning Range and Swing Level perform better without it)
+        # Combined (3-Strategy): at US Late session, NO filter beats selective filter
+        # ($24,831 raw vs $23,733 filtered at 21-24 UTC). Filter costs -$1,098.
+        # For individual strategies: selective filter applied as before.
         if is_combined:
-            from btc_research.strategies.combined import _FILTER_STRATEGIES
+            # Run Combined WITHOUT any IM filter — raw is better at US Late
             trades_fil = _simulate(strat, df_btc, df_gold, df_nas,
-                                   use_intermarket=False,   # overridden by filter_strategy_names
-                                   filter_strategy_names=_FILTER_STRATEGIES,
+                                   use_intermarket=False,
+                                   filter_strategy_names=None,
                                    allowed_hours=allowed_hours)
+            filter_label = "no-filter"
         else:
             trades_fil = _simulate(strat, df_btc, df_gold, df_nas,
                                    use_intermarket=True,
                                    allowed_hours=allowed_hours)
+            filter_label = "filtered"
         stats_fil  = _stats(trades_fil)
 
-        filter_label = "selective" if is_combined else "filtered"
         print(f"done  ({stats_raw['trades']} raw / {stats_fil['trades']} {filter_label} trades)")
 
         all_results.append({
@@ -361,8 +370,8 @@ def run_comparison(
 
     # ── Print comparison tables ───────────────────────────────────────────────
     for label, key, trades_key in [
-        ("WITHOUT inter-market filter (pure strategy signal)", "raw",      "raw_trades"),
-        ("WITH inter-market filter  [Combined = selective: only Volatility sub-strategy filtered]",
+        ("WITHOUT inter-market filter (pure strategy signal)", "raw", "raw_trades"),
+        ("WITH inter-market filter  [Combined = NO filter (raw beats filtered at US Late)]",
          "filtered", "filtered_trades"),
     ]:
         print()

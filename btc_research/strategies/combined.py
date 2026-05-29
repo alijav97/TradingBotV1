@@ -92,6 +92,10 @@ class CombinedStrategy(BTCStrategy):
             if result.get("signal"):
                 result["strategy_used"]   = strat.name
                 result["needs_im_filter"] = strat.name in _FILTER_STRATEGIES
+                # Overwrite reason with strategy name so sub-strategy breakdown
+                # can group trades correctly (otherwise each unique reason string
+                # creates its own row in value_counts())
+                result["reason"] = strat.name
                 return result
 
         # None fired
