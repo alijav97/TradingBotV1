@@ -26,6 +26,12 @@ if df_btc.empty:
     print("ERROR: No BTC data. Make sure MT5 is running.")
     sys.exit(1)
 
+# Ensure datetime index (fetcher returns a "time" column, not index)
+if "time" in df_btc.columns:
+    df_btc = df_btc.set_index(pd.to_datetime(df_btc["time"], utc=True)).drop(columns=["time"])
+elif not isinstance(df_btc.index, pd.DatetimeIndex):
+    df_btc.index = pd.to_datetime(df_btc.index, utc=True)
+
 # ── Indicators ────────────────────────────────────────────────────────────────
 def calc_adx(df, period=14):
     h = df["high"].astype(float); l = df["low"].astype(float); c = df["close"].astype(float)
@@ -50,7 +56,7 @@ ATR_ARR = _tr.rolling(14).mean().bfill().values
 ADX_ARR = calc_adx(df_btc, 14)
 EMA50   = _c.ewm(span=50,  adjust=False).mean().values
 EMA200  = _c.ewm(span=200, adjust=False).mean().values
-TS      = pd.to_datetime(df_btc.index)
+TS      = df_btc.index
 H_ARR   = _h.values
 L_ARR   = _l.values
 C_ARR   = _c.values
@@ -215,6 +221,9 @@ def stats(trades):
 
 # ── Monthly breakdown helper ──────────────────────────────────────────────────
 def monthly_breakdown(trades, label):
+    if not trades:
+        print(f"\n  No trades for {label}")
+        return
     monthly = defaultdict(list)
     for t in trades:
         ym = str(t["open_time"])[:7]
