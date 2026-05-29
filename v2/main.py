@@ -217,8 +217,8 @@ def main() -> None:
             f"MT5: connected\n"
             f"Paper trading: ACTIVE\n"
             f"Instruments: {', '.join(active)}\n"
-            f"Kill-zone window: 13:00-17:00 UTC (5PM-9PM UAE)\n"
-            f"Scan: every 2 mins (kill-zone 5PM-9PM UAE)"
+            f"Kill-zone: 13:00-17:00 UTC (5PM-9PM UAE)\n"
+            f"Scan: every 2s inside kill-zone | every 5min outside"
         )
     except Exception:
         pass
@@ -227,7 +227,7 @@ def main() -> None:
     _shutdown_event.wait()
 
     # ── Graceful shutdown ─────────────────────────────────────────────────────
-    logger.info("Shutting down…")
+    logger.info("Shutting down...")
 
     try:
         scheduler.stop()
@@ -240,6 +240,19 @@ def main() -> None:
         logger.info("Journal closed")
     except Exception as exc:
         logger.error("Error closing journal: %s", exc)
+
+    # Send Telegram shutdown notification
+    try:
+        from v2.api.telegram_bot import TelegramAlerter
+        from datetime import datetime, timezone
+        alerter = TelegramAlerter()
+        alerter.send_text(
+            f"TradingBotV2 stopped ⛔\n"
+            f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+            f"Reason: SIGINT / SIGTERM (manual stop or system shutdown)"
+        )
+    except Exception:
+        pass
 
     logger.info("TradingBotV2 shutdown complete")
 
