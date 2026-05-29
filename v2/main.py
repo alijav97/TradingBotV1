@@ -28,6 +28,7 @@ Docker
 """
 from __future__ import annotations
 
+import atexit
 import logging
 import logging.handlers
 import os
@@ -89,6 +90,24 @@ from v2.scheduler.scheduler import BotScheduler
 _shutdown_event = threading.Event()
 
 
+def _send_shutdown_alert() -> None:
+    """
+    Send a Telegram alert when the process exits — called by atexit so it fires
+    on ANY exit path: normal shutdown, SIGINT (Ctrl+C), or hard kill (Stop-Process).
+    """
+    try:
+        from v2.api.telegram_bot import TelegramAlerter
+        from datetime import datetime, timezone
+        alerter = TelegramAlerter()
+        alerter.send_text(
+            f"TradingBotV2 stopped ⛔\n"
+            f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+            f"Reason: Process terminated"
+        )
+    except Exception:
+        pass
+
+
 def _handle_signal(signum: int, frame: Any) -> None:
     """SIGINT / SIGTERM handler — signals the main loop to exit cleanly."""
     sig_name = signal.Signals(signum).name
@@ -128,6 +147,10 @@ def _start_api_server(host: str, port: int) -> threading.Thread:
 
 def main() -> None:
     """Wire everything together and keep the process alive until shutdown."""
+
+    # Register shutdown alert as early as possible so it fires on ANY exit
+    # path — including hard kills on Windows (Stop-Process without -Force).
+    atexit.register(_send_shutdown_alert)
 
     logger.info("=" * 60)
     logger.info("TradingBotV2 starting up")
@@ -227,6 +250,12 @@ def main() -> None:
     _shutdown_event.wait()
 
     # ── Graceful shutdown ─────────────────────────────────────────────────────
+    # Unregister the atexit hook so we send the richer "SIGINT/SIGTERM" alert
+    # below instead of a duplicate "Process terminated" alert.
+    try:
+        atexit.unregister(_send_shutdown_alert)
+    except Exception:
+        pass
     logger.info("Shutting down...")
 
     try:
