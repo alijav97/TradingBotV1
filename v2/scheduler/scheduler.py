@@ -120,6 +120,20 @@ class BotScheduler:
             misfire_grace_time = 5,
         )
 
+        # 3) Post-kill-zone trade watch: every 5 seconds
+        #    After 17:00 UTC, if a trade opened during the kill-zone is still
+        #    running (waiting for SL/TP), monitor it every 5s until it closes.
+        #    Once no open trades remain this job exits instantly — overhead is
+        #    a single journal count query (~1ms) every 5 seconds.
+        self._scheduler.add_job(
+            func     = self._job_post_killzone_watch,
+            trigger  = IntervalTrigger(seconds=5),
+            id       = "post_kz_trade_watch",
+            name     = "Post-kill-zone open trade monitor (5s)",
+            max_instances = 1,
+            misfire_grace_time = 10,
+        )
+
         # H4 signal scan — every 4 hours at :00
         self._scheduler.add_job(
             func     = lambda: self._job_scan("H4"),
@@ -183,6 +197,35 @@ class BotScheduler:
         if not (13 <= _now.hour < 17):
             return   # outside window — exit immediately, no MT5 call
         self._job_scan("H1")
+
+    def _job_post_killzone_watch(self) -> None:
+        """Every-5-second trade monitor — active ONLY after kill-zone closes
+        AND while at least one trade is still open.
+
+        Flow:
+          kill-zone active (13-17 UTC) → skip (kill-zone job covers this)
+          kill-zone closed + no open trades → skip (background 5-min handles it)
+          kill-zone closed + trade still open → run trade monitor every 5s
+        """
+        _now = datetime.now(timezone.utc)
+
+        # Let the kill-zone job handle the active window
+        if 13 <= _now.hour < 17:
+            return
+
+        # Only continue if there is at least one open trade
+        try:
+            open_count = self._pt.get_open_summary().get("count", 0)
+        except Exception:
+            return
+        if open_count == 0:
+            return
+
+        # Trade is open outside kill-zone — check SL/TP every 5 seconds
+        logger.debug(
+            "Post-KZ watch: %d open trade(s) — running monitor", open_count
+        )
+        self._job_monitor_trades()
 
     def _job_scan(self, timeframe: str) -> None:
         """Run confluence scan on active instruments for a given timeframe."""
