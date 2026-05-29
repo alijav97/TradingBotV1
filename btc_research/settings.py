@@ -50,7 +50,7 @@ MR_START_UTC = 17   # US Mid onwards — consolidation before US Late session
 MR_END_UTC   = 21   # just before kill-zone opens
 
 # ── Risk & position sizing ────────────────────────────────────────────────────
-STARTING_BALANCE = 10_000   # USD — backtest starting capital
+STARTING_BALANCE = 500      # USD — backtest starting capital
 RISK_PCT         = 0.02     # 2% risk per trade
                              # (reduced from 3% — BTC at 43-46% WR needs lower risk
                              #  to keep MaxDD at ~25% vs 45%+ at 3%)

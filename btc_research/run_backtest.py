@@ -63,6 +63,9 @@ def main() -> None:
     parser.add_argument("--optimize", choices=["volatility", "morning_range", "both"],
                         default=None,
                         help="Optimize parameters for top strategies to find more trades")
+    parser.add_argument("--trades", action="store_true",
+                        help="Print every trade for the Combined strategy with balance after "
+                             "(trade-by-trade log to verify compounding). Also saves trades.csv.")
     args = parser.parse_args()
 
     # Apply score override before any imports of confluence module
@@ -152,6 +155,73 @@ def main() -> None:
             sys.exit(1)
         from btc_research.backtest.optimizer import run_optimizer
         run_optimizer(df_btc, df_gold, df_nas, strategy=args.optimize)
+        sys.exit(0)
+
+    # ── Trade-by-trade log ────────────────────────────────────────────────────
+    if args.trades:
+        print("MODE: Trade-by-trade log — Combined Strategy")
+        print(f"Starting balance : ${_settings.STARTING_BALANCE:,.2f}")
+        print(f"Risk per trade   : {_settings.RISK_PCT*100:.1f}% (compounding)")
+        print(f"Session          : {_settings.KZ_START_UTC}:00-{_settings.KZ_END_UTC}:00 UTC")
+        print()
+        data = fetch_all(use_cache=True, force_refresh=args.refresh)
+        df_btc  = data.get(BTC_SYMBOL,  __import__("pandas").DataFrame())
+        df_gold = data.get(GOLD_SYMBOL, __import__("pandas").DataFrame())
+        df_nas  = data.get(NAS_SYMBOL,  __import__("pandas").DataFrame())
+        if df_btc.empty:
+            print("ERROR: No BTCUSD data.")
+            sys.exit(1)
+        from btc_research.backtest.strategy_comparison import _simulate, _stats
+        from btc_research.strategies.combined import CombinedStrategy
+        strat  = CombinedStrategy(atr_multiplier=1.2, close_zone=0.45, range_bars=6)
+        trades = _simulate(strat, df_btc, df_gold, df_nas, use_intermarket=False)
+        stats  = _stats(trades)
+
+        # ── Header ────────────────────────────────────────────────────────────
+        hdr = (f"{'#':>4}  {'Date':>12}  {'Dir':>5}  {'Entry':>9}  "
+               f"{'SL':>9}  {'TP1':>9}  {'TP2':>9}  "
+               f"{'Lots':>8}  {'Risk$':>7}  {'Sub-Strategy':>22}  "
+               f"{'Result':>12}  {'PnL $':>9}  {'R':>6}  {'Balance':>10}")
+        print(hdr)
+        print("-" * len(hdr))
+
+        running_bal = _settings.STARTING_BALANCE
+        for idx, t in enumerate(trades, 1):
+            sl_dist    = abs(t["entry"] - t["sl"])
+            risk_usd   = round(running_bal * _settings.RISK_PCT, 2)
+            tp1_price  = (t["entry"] + t.get("tp1_rr", 2.0) * sl_dist
+                          if t["direction"] == "long"
+                          else t["entry"] - t.get("tp1_rr", 2.0) * sl_dist)
+            tp2_price  = (t["entry"] + t.get("tp2_rr", 5.0) * sl_dist
+                          if t["direction"] == "long"
+                          else t["entry"] - t.get("tp2_rr", 5.0) * sl_dist)
+            sub        = t.get("signal_reason", "")[:22]
+            date_str   = str(t["open_time"])[:10]
+            running_bal = t["balance_after"]
+            print(
+                f"{idx:>4}  {date_str:>12}  {t['direction'].upper():>5}  "
+                f"{t['entry']:>9,.2f}  {t['sl']:>9,.2f}  "
+                f"{tp1_price:>9,.2f}  {tp2_price:>9,.2f}  "
+                f"{t['lots']:>8.5f}  ${risk_usd:>6,.2f}  "
+                f"{sub:>22}  "
+                f"{t['exit_reason']:>12}  "
+                f"${t['pnl_usd']:>+8,.2f}  {t['r_multiple']:>+5.2f}R  "
+                f"${t['balance_after']:>9,.2f}"
+            )
+
+        print("-" * len(hdr))
+        print(f"\nSUMMARY: {stats['trades']} trades | "
+              f"WR={stats['wr']}% | Avg R={stats['avg_r']:+.2f} | "
+              f"Total PnL=${stats['total_pnl']:+,.2f} | MaxDD={stats['max_dd']}%")
+        print(f"Final balance: ${trades[-1]['balance_after']:,.2f}  "
+              f"(started ${_settings.STARTING_BALANCE:,.2f})")
+
+        # ── Save to CSV ───────────────────────────────────────────────────────
+        import pandas as _pd
+        csv_path = __import__("pathlib").Path("btc_research/data/trades_combined.csv")
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        _pd.DataFrame(trades).to_csv(csv_path, index=False)
+        print(f"\nFull trade log saved → {csv_path}")
         sys.exit(0)
 
     # ── Strategy comparison mode ──────────────────────────────────────────────
