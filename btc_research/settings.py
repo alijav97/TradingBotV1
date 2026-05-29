@@ -26,20 +26,20 @@ MT5_SERVER_UTC_OFFSET = 3
 #   13-17 UTC — 38.2% WR  (WTI assumption was wrong for BTC)
 #
 # Asia Night session (00-04 UTC) overall: 46.9% WR, +$15,634 total PnL — BEST
-# Optimal window: 02:00-04:00 UTC = Late Tokyo / pre-London positioning
-# This is when Asian institutions (Japan, HK, Singapore) close overnight BTC
-# books, creating clean directional moves.
+# Session scanner best single hours: 02:00 UTC (57.1% WR) and 03:00 UTC (52.6% WR)
+# Optimizer best window: 01-05 UTC → 159 trades over 2yr @ 43.4% WR, 6.6 trades/month
+# This 4-hour block captures late Tokyo close + pre-London positioning + early London open.
 #
-# UAE time equivalent: 06:00-08:00 AM UAE
-KZ_START_UTC = 2
-KZ_END_UTC   = 4
+# UAE time equivalent: 05:00-09:00 AM UAE
+KZ_START_UTC = 1
+KZ_END_UTC   = 5
 
 # ── Morning range window (range forms BEFORE kill-zone entry) ─────────────────
-# For 02-04 UTC kill-zone, range forms during prior Asia session: 20:00-02:00 UTC
+# For 01-05 UTC kill-zone, range forms during prior US late session / early Asia: 20:00-01:00 UTC
 # Using 6-bar lookback in strategy (last 6 bars before signal bar) is cleaner
 # than a fixed session window here, so MR_START/END are kept for documentation.
 MR_START_UTC = 20   # prior day late US / early Asia
-MR_END_UTC   = 2    # just before kill-zone opens
+MR_END_UTC   = 1    # just before kill-zone opens
 
 # ── Risk & position sizing ────────────────────────────────────────────────────
 STARTING_BALANCE = 10_000   # USD — backtest starting capital
