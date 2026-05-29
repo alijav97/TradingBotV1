@@ -53,6 +53,11 @@ def main() -> None:
                         help="Run session scan using the REAL Combined strategy classes "
                              "(Volatility+Swing+MorningRange with selective IM filter). "
                              "More accurate than --scan-sessions which uses the old confluence engine.")
+    parser.add_argument("--scan-all", action="store_true",
+                        help="Run session scanner for EVERY strategy independently. "
+                             "Shows which session is optimal for each strategy so we can "
+                             "identify incompatible strategies (e.g. Volatility needs US Open "
+                             "while Morning Range needs Asia). Takes ~10-15 minutes.")
     parser.add_argument("--compare", action="store_true",
                         help="Compare all 5 strategies head-to-head (with & without IM filter)")
     parser.add_argument("--optimize", choices=["volatility", "morning_range", "both"],
@@ -93,6 +98,26 @@ def main() -> None:
         run_combined_session_scan(df_btc, df_gold, df_nas)
         print("\nOnce you see the best session, update KZ_START_UTC / KZ_END_UTC")
         print("in btc_research/settings.py, then re-run: --compare")
+        sys.exit(0)
+
+    # ── Per-strategy session scan ─────────────────────────────────────────────
+    if args.scan_all:
+        print("MODE: Per-Strategy Session Scanner")
+        print("Testing EVERY strategy across EVERY session block independently.")
+        print("This identifies which strategies are session-compatible and which")
+        print("belong in completely different time windows.")
+        print("(May take 10-15 minutes — testing 6 strategies × 7 sessions)")
+        print()
+        data = fetch_all(use_cache=True, force_refresh=args.refresh)
+        df_btc  = data.get(BTC_SYMBOL,  __import__("pandas").DataFrame())
+        df_gold = data.get(GOLD_SYMBOL, __import__("pandas").DataFrame())
+        df_nas  = data.get(NAS_SYMBOL,  __import__("pandas").DataFrame())
+        if df_btc.empty:
+            print("ERROR: No BTCUSD data. Check MT5 connection.")
+            sys.exit(1)
+        from btc_research.backtest.session_scanner import run_per_strategy_scan
+        from btc_research.backtest.strategy_comparison import ALL_STRATEGIES
+        run_per_strategy_scan(df_btc, df_gold, df_nas, ALL_STRATEGIES)
         sys.exit(0)
 
     # ── Session scanner mode ──────────────────────────────────────────────────

@@ -552,3 +552,163 @@ def run_combined_session_scan(
         print("  Update KZ_START_UTC / KZ_END_UTC in btc_research/settings.py")
         print("  then re-run: python btc_research/run_backtest.py --compare")
     print(SEP)
+
+
+# ── Per-strategy individual session scanner ──────────────────────────────────
+
+def run_per_strategy_scan(
+    df_btc:     pd.DataFrame,
+    df_gold:    pd.DataFrame,
+    df_nas:     pd.DataFrame,
+    strategies: "list[BTCStrategy] | None" = None,
+) -> None:
+    """
+    Run the session scanner for EACH strategy independently.
+    Shows which session window is optimal for each strategy, so we can:
+      1. See if strategies share the same best session (can stay in Combined)
+      2. Identify strategies that belong in a completely different session
+      3. Decide which strategies to keep in Combined and which to run separately
+
+    Output:
+      - Per-strategy: best session block + hour by WR, AvgR, PnL
+      - Summary table: one row per strategy with their optimal session
+      - Recommendation: which strategies are session-compatible
+    """
+    from btc_research.strategies.combined import CombinedStrategy, _FILTER_STRATEGIES
+    from btc_research.backtest.strategy_comparison import _simulate, _stats
+    from btc_research.backtest.strategy_comparison import ALL_STRATEGIES
+
+    if strategies is None:
+        strategies = ALL_STRATEGIES
+
+    SEP  = "=" * 80
+    LINE = "-" * 80
+
+    print()
+    print(SEP)
+    print("PER-STRATEGY SESSION SCANNER")
+    print("Finding the optimal trading session for each strategy independently")
+    print(SEP)
+    print(f"Testing {len(strategies)} strategies × 7 session blocks each...")
+    print("(This will take several minutes)\n")
+
+    summary: list[dict] = []
+
+    for strat in strategies:
+        is_combined = "Combined" in strat.name
+        filter_names = _FILTER_STRATEGIES if is_combined else None
+
+        print(f"\n{'─'*80}")
+        print(f"  STRATEGY: {strat.name}")
+        print(f"{'─'*80}")
+        print(f"  {'Session':<25} {'Trades':>7} {'WR%':>7} {'Avg R':>8} "
+              f"{'Total PnL':>12} {'MaxDD':>8}")
+        print(f"  {LINE}")
+
+        block_results = []
+        for name, (start, end) in SESSION_BLOCKS.items():
+            hours  = set(range(start, end))
+            trades = _simulate(
+                strat, df_btc, df_gold, df_nas,
+                use_intermarket=not is_combined,
+                filter_strategy_names=filter_names,
+                allowed_hours=hours,
+            )
+            if not trades:
+                block_results.append({"session": name, "trades": 0,
+                                       "wr": 0.0, "total_pnl": 0.0,
+                                       "avg_r": 0.0, "max_dd": 0.0})
+                print(f"  {name:<25} {'0':>7}")
+                continue
+            st = _stats(trades)
+            block_results.append({"session": name, **st})
+            # Highlight the row if it looks good
+            flag = " ◄" if st["wr"] >= 45 and st["total_pnl"] > 0 and st["max_dd"] < 25 else ""
+            print(f"  {name:<25} {st['trades']:>7} {st['wr']:>6.1f}% "
+                  f"{st['avg_r']:>+7.2f}R "
+                  f"${st['total_pnl']:>+10,.2f} "
+                  f"{st['max_dd']:>7.1f}%{flag}")
+
+        # Find best session for this strategy
+        valid = [b for b in block_results if b.get("trades", 0) >= 10]
+        if not valid:
+            print(f"\n  ⚠  No sessions with ≥10 trades. Strategy may not work on H1.")
+            summary.append({
+                "strategy": strat.name,
+                "best_session": "N/A",
+                "best_wr": 0.0,
+                "best_pnl": 0.0,
+                "best_r": 0.0,
+                "best_dd": 0.0,
+                "best_trades": 0,
+            })
+            continue
+
+        # Score: 40% WR + 40% PnL + 20% AvgR (normalised)
+        max_wr  = max(b["wr"] for b in valid) or 1
+        max_pnl = max(b["total_pnl"] for b in valid) or 1
+        max_r   = max(b["avg_r"] for b in valid) or 1
+        for b in valid:
+            b["score"] = (max(b["wr"], 0) / max_wr * 0.4 +
+                          max(b["total_pnl"], 0) / max(max_pnl, 1) * 0.4 +
+                          max(b["avg_r"], 0) / max(max_r, 1) * 0.2)
+        best = max(valid, key=lambda x: x["score"])
+
+        print(f"\n  ★ Best session : {best['session'].strip()}")
+        print(f"    {best['trades']} trades | WR={best['wr']:.1f}% | "
+              f"AvgR={best['avg_r']:+.2f}R | "
+              f"PnL=${best['total_pnl']:+,.2f} | "
+              f"MaxDD={best['max_dd']:.1f}%")
+
+        summary.append({
+            "strategy":     strat.name,
+            "best_session": best["session"].strip(),
+            "best_wr":      best["wr"],
+            "best_pnl":     best["total_pnl"],
+            "best_r":       best["avg_r"],
+            "best_dd":      best["max_dd"],
+            "best_trades":  best["trades"],
+        })
+
+    # ── Summary comparison table ──────────────────────────────────────────────
+    print()
+    print(SEP)
+    print("SUMMARY — OPTIMAL SESSION PER STRATEGY")
+    print(SEP)
+    print(f"  {'Strategy':<28} {'Best Session':<25} {'Trades':>7} "
+          f"{'WR%':>7} {'Avg R':>8} {'PnL':>12} {'MaxDD':>8}")
+    print(f"  {LINE}")
+    for s in sorted(summary, key=lambda x: x["best_pnl"], reverse=True):
+        print(f"  {s['strategy']:<28} {s['best_session']:<25} "
+              f"{s['best_trades']:>7} "
+              f"{s['best_wr']:>6.1f}% "
+              f"{s['best_r']:>+7.2f}R "
+              f"${s['best_pnl']:>+10,.2f} "
+              f"{s['best_dd']:>7.1f}%")
+
+    # ── Session compatibility analysis ───────────────────────────────────────
+    print()
+    print(SEP)
+    print("SESSION COMPATIBILITY — Which strategies can share the same window?")
+    print(SEP)
+
+    # Group strategies by their best session
+    from collections import defaultdict
+    by_session: dict = defaultdict(list)
+    for s in summary:
+        if s["best_session"] != "N/A":
+            by_session[s["best_session"]].append(s["strategy"])
+
+    for session, strat_names in sorted(by_session.items(),
+                                        key=lambda x: len(x[1]), reverse=True):
+        print(f"  {session:<25}: {', '.join(strat_names)}")
+
+    print()
+    print("RECOMMENDATION:")
+    print("  Strategies sharing the same best session → keep together in Combined")
+    print("  Strategies with DIFFERENT best sessions  → run as separate bots OR")
+    print("  widen the Combined session window to cover both optimal windows")
+    print()
+    print("  Next: update settings.py with the best combined session window,")
+    print("  then re-run: python btc_research/run_backtest.py --compare")
+    print(SEP)
