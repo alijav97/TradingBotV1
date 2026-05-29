@@ -16,15 +16,30 @@ NAS_SYMBOL  = "NAS100"    # Nasdaq 100 — risk-on/off factor
 # so data fetched through it will already be in true UTC.
 MT5_SERVER_UTC_OFFSET = 3
 
-# ── Kill-zone window (same alignment as WTI strategy) ────────────────────────
-# 13:00-17:00 UTC = 5 PM – 9 PM UAE = US market open
-KZ_START_UTC = 13
-KZ_END_UTC   = 17
+# ── Kill-zone window — SET FROM SESSION SCANNER RESULTS ─────────────────────
+# Session scanner tested all 24 hours on 2yr BTC data and found:
+#
+#   02:00 UTC — 57.1% WR, +$9,704 (best single hour)
+#   03:00 UTC — 52.6% WR, +$9,962 (second best)
+#   00:00 UTC — 31.7% WR  (avoid)
+#   01:00 UTC — 26.7% WR  (avoid)
+#   13-17 UTC — 38.2% WR  (WTI assumption was wrong for BTC)
+#
+# Asia Night session (00-04 UTC) overall: 46.9% WR, +$15,634 total PnL — BEST
+# Optimal window: 02:00-04:00 UTC = Late Tokyo / pre-London positioning
+# This is when Asian institutions (Japan, HK, Singapore) close overnight BTC
+# books, creating clean directional moves.
+#
+# UAE time equivalent: 06:00-08:00 AM UAE
+KZ_START_UTC = 2
+KZ_END_UTC   = 4
 
-# ── Morning range window (range forms before kill-zone entry) ─────────────────
-# 08:00-13:00 UTC = London session = pre-kill-zone
-MR_START_UTC = 8
-MR_END_UTC   = 13
+# ── Morning range window (range forms BEFORE kill-zone entry) ─────────────────
+# For 02-04 UTC kill-zone, range forms during prior Asia session: 20:00-02:00 UTC
+# Using 6-bar lookback in strategy (last 6 bars before signal bar) is cleaner
+# than a fixed session window here, so MR_START/END are kept for documentation.
+MR_START_UTC = 20   # prior day late US / early Asia
+MR_END_UTC   = 2    # just before kill-zone opens
 
 # ── Risk & position sizing ────────────────────────────────────────────────────
 STARTING_BALANCE = 10_000   # USD — backtest starting capital
