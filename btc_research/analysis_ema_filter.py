@@ -187,7 +187,8 @@ def simulate(strategy,
 # ── Stats helper ───────────────────────────────────────────────────────────────
 def stats(trades):
     if not trades:
-        return {}
+        return {"trades": 0, "wr": 0.0, "avg_r": 0.0, "pnl": 0.0,
+                "final": float(cfg.STARTING_BALANCE), "max_dd": 0.0, "pct": 0.0}
     total = len(trades)
     wins  = [t for t in trades if t["pnl_usd"] > 0]
     pnl   = sum(t["pnl_usd"] for t in trades)
