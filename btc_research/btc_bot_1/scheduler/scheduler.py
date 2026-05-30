@@ -61,8 +61,8 @@ class BTCScheduler:
         self._journal = journal
         self._feed    = feed
         self._alerter = TelegramAlerter()
-        self._kz_scan_count   = 0
-        self._last_kz_log     = datetime.min.replace(tzinfo=timezone.utc)  # heartbeat tracker
+        self._kz_scan_count  = 0
+        self._bg_scan_count  = 0
         self._scheduler = (
             BackgroundScheduler(
                 executors={"default": APSThreadPool(5)},
@@ -144,6 +144,9 @@ class BTCScheduler:
         if KZ_START_UTC <= _now.hour < KZ_END_UTC:
             return   # kill-zone job covers this window
 
+        self._bg_scan_count += 1
+        logger.info("BG scan #%d | UTC %02d:%02d", self._bg_scan_count, _now.hour, _now.minute)
+
         hours_to_kz = (KZ_START_UTC - _now.hour) % 24
         snap = self._engine.get_market_snapshot()
 
@@ -181,39 +184,13 @@ class BTCScheduler:
     def _job_scan_killzone(self) -> None:
         """2-second scan — ONLY inside kill-zone (21-24 UTC)."""
         _now = datetime.now(timezone.utc)
-        # Handle midnight wrap: KZ_END_UTC = 24 means hour 0 is still in range
         in_kz = KZ_START_UTC <= _now.hour < 24   # 21,22,23 only
         if not in_kz:
             return
 
         self._kz_scan_count += 1
-
-        # Heartbeat every 60 seconds so operator knows the bot is alive
-        if (_now - self._last_kz_log).total_seconds() >= 60:
-            self._last_kz_log = _now
-            # Get a quick status snapshot for the heartbeat line
-            try:
-                snap = self._engine.get_market_snapshot()
-                if snap:
-                    reason_long  = self._engine.scan("long").get("blocked_by", "—")
-                    reason_short = self._engine.scan("short").get("blocked_by", "—")
-                    logger.info(
-                        "KZ HEARTBEAT #%d | UTC %02d:%02d | BTC $%s | ADX %.1f | "
-                        "LONG: %s | SHORT: %s",
-                        self._kz_scan_count, _now.hour, _now.minute,
-                        f"{snap['price']:,.0f}", snap.get("adx", 0),
-                        reason_long, reason_short,
-                    )
-                else:
-                    logger.info(
-                        "KZ HEARTBEAT #%d | UTC %02d:%02d | no market data",
-                        self._kz_scan_count, _now.hour, _now.minute,
-                    )
-            except Exception as exc:
-                logger.info(
-                    "KZ HEARTBEAT #%d | UTC %02d:%02d | heartbeat error: %s",
-                    self._kz_scan_count, _now.hour, _now.minute, exc,
-                )
+        logger.info("KZ scan #%d | UTC %02d:%02d:%02d",
+                    self._kz_scan_count, _now.hour, _now.minute, _now.second)
 
         self._run_scan()
 
@@ -244,6 +221,8 @@ class BTCScheduler:
                 continue
 
             if not signal.get("signal"):
+                blocked = signal.get("blocked_by", "no signal")
+                logger.info("  %s → SKIP: %s", direction.upper(), blocked)
                 continue
 
             logger.info(
