@@ -185,7 +185,8 @@ class SignalEngine:
 
         # ── Filters ───────────────────────────────────────────────────────────
         if adx < ADX_THRESHOLD:
-            logger.debug("ADX %.1f < threshold %d — skip", adx, ADX_THRESHOLD)
+            logger.info("  → SKIP: ADX %.1f < threshold %d (weak trend) | BTC $%.0f | EMA200 $%.0f",
+                        adx, ADX_THRESHOLD, bar_close, ema200)
             return None
 
         # EMA200 determines allowed direction
@@ -203,7 +204,7 @@ class SignalEngine:
         result = self._strat.generate_signal(df, bar_time, direction)
 
         if not result.get("signal"):
-            logger.debug("No signal: %s", result.get("reason", ""))
+            logger.info("  → SKIP: %s", result.get("reason", "no signal"))
             return None
 
         # ── Risk sizing ───────────────────────────────────────────────────────

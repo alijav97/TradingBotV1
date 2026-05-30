@@ -84,6 +84,8 @@ class BTC2Scheduler:
         self._pt      = paper_trader
         self._journal = journal
         self._alerter = alerter
+        self._kz_scan_count  = 0
+        self._bg_scan_count  = 0
 
         self._scheduler = (
             BackgroundScheduler(
@@ -185,8 +187,13 @@ class BTC2Scheduler:
         if now.hour not in KZ_HOURS:
             return   # not our session — exit immediately, no API call
 
+        self._kz_scan_count += 1
+        logger.info("KZ scan #%d | UTC %02d:%02d:%02d",
+                    self._kz_scan_count, now.hour, now.minute, now.second)
+
         # Skip if trade already open
         if self._pt.get_open_summary()["count"] > 0:
+            logger.info("  → trade already open — skipping signal scan")
             return
 
         self._run_scan(now)
@@ -202,9 +209,9 @@ class BTC2Scheduler:
         if now.hour in KZ_HOURS:
             return   # kill-zone active — let the 2s job handle it
 
-        # Only scan if no trade open (informational scan, not entry scan)
-        # Don't open trades outside kill-zone hours
-        logger.debug("Background scan hr=%02d UTC (data refresh only)", now.hour)
+        self._bg_scan_count += 1
+        logger.info("BG scan #%d | UTC %02d:%02d (data refresh — outside KZ)",
+                    self._bg_scan_count, now.hour, now.minute)
 
         # We still call the engine so the data feed cache stays warm,
         # but we intentionally don't open a trade outside KZ.
@@ -212,7 +219,7 @@ class BTC2Scheduler:
         try:
             self._engine.scan(now=now)   # returns None outside KZ — that's fine
         except Exception as exc:
-            logger.debug("Background scan error: %s", exc)
+            logger.info("Background scan error: %s", exc)
 
     def _job_post_kz_watch(self) -> None:
         """
