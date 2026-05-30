@@ -196,8 +196,8 @@ def simulate(
         if open_t is not None:
             continue
 
-        # ── Entry gate: 02-04 UTC only ────────────────────────────────────────
-        if not (KZ_START <= hr < KZ_END):
+        # ── Entry gate: final hours [1,2,3,8] UTC ────────────────────────────
+        if hr not in b2cfg.KZ_HOURS:
             continue
 
         adx_now    = float(ADX_ARR[i])
