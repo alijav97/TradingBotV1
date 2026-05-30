@@ -28,8 +28,8 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 if TYPE_CHECKING:
-    from v2.connectors.unified_data import DataFeed
-    from v2.journal.sqlite_journal import Journal
+    from btc_research.btc_bot_2.connectors.unified_data import DataFeed
+    from btc_research.btc_bot_2.journal.sqlite_journal  import Journal
 
 from btc_research.btc_bot_2.settings import (
     ADX_THRESHOLD, ADX_PERIOD, EMA200_PERIOD, KZ_HOURS,

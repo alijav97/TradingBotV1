@@ -98,9 +98,9 @@ from btc_research.btc_bot_2.paper_trader  import BTC2PaperTrader
 from btc_research.btc_bot_2.scheduler     import BTC2Scheduler
 from btc_research.btc_bot_2.telegram      import BTC2Alerter
 
-# ── Shared infrastructure from v2 ────────────────────────────────────────────
-from v2.connectors.unified_data import DataFeed
-from v2.journal.sqlite_journal  import Journal
+# ── BTC Bot 2 standalone infrastructure (no v2 dependency) ───────────────────
+from btc_research.btc_bot_2.connectors.unified_data import DataFeed
+from btc_research.btc_bot_2.journal.sqlite_journal  import Journal
 
 # ── Shutdown event ────────────────────────────────────────────────────────────
 _shutdown_event = threading.Event()
@@ -175,15 +175,11 @@ def main() -> None:
     logger.info("=" * 60)
 
     # ── 1. DataFeed (MT5 — Pepperstone BTCUSD, same as Bot 1) ────────────────
-    logger.info("Connecting MT5 DataFeed...")
+    # Credentials are read from settings.py (loaded from .env)
+    logger.info("Connecting MT5 DataFeed (Pepperstone BTCUSD)...")
     feed = DataFeed()
     try:
-        conn = feed.connect(
-            mt5_login    = int(os.environ.get("MT5_ACCOUNT",
-                               os.environ.get("MT5_LOGIN", "0")) or "0"),
-            mt5_password = os.environ.get("MT5_PASSWORD", ""),
-            mt5_server   = os.environ.get("MT5_SERVER", ""),
-        )
+        conn = feed.connect()   # credentials come from btc_bot_2.settings
         logger.info("DataFeed connected: MT5=%s", conn.get("mt5"))
         if not conn.get("mt5"):
             logger.warning(
@@ -232,15 +228,7 @@ def main() -> None:
 
     # ── 7. Telegram startup alert ─────────────────────────────────────────────
     try:
-        # Get live balance from journal
-        balance = STARTING_BALANCE
-        try:
-            all_trades = journal.get_trades(status="CLOSED")
-            total_pnl  = sum(float(t.get("pnl_usd") or 0) for t in all_trades)
-            if total_pnl != 0:
-                balance = STARTING_BALANCE + total_pnl
-        except Exception:
-            pass
+        balance = journal.get_paper_balance()
         alerter.send_startup(balance)
     except Exception:
         pass

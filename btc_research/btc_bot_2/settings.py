@@ -56,6 +56,26 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# ── .env loader ───────────────────────────────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(os.environ.get("ENV_FILE",
+                     Path(__file__).resolve().parents[2] / ".env"))
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+except ImportError:
+    pass
+
+# ── MT5 credentials (shared Pepperstone account — same as Bot 1) ──────────────
+MT5_LOGIN    = int(os.environ.get("MT5_ACCOUNT", os.environ.get("MT5_LOGIN", "0")) or "0")
+MT5_PASSWORD = os.environ.get("MT5_PASSWORD", "")
+MT5_SERVER   = os.environ.get("MT5_SERVER",   "")
+
+# Pepperstone server time is UTC+3.
+# This offset is subtracted from MT5 bar timestamps to get TRUE UTC.
+# Critical for kill-zone hour alignment — do not change without re-testing.
+MT5_SERVER_UTC_OFFSET = 3
+
 # ── Kill-zone hours (NOT a contiguous range — use a list) ─────────────────────
 # Hours 1, 2, 3 = Asia Night  |  Hour 8 = EU session open
 KZ_HOURS     = [1, 2, 3, 8]    # UTC hours to scan  (05,06,07,12 UAE)

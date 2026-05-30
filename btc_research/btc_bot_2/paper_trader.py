@@ -28,8 +28,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from v2.connectors.unified_data import DataFeed
-    from v2.journal.sqlite_journal import Journal
+    from btc_research.btc_bot_2.connectors.unified_data import DataFeed
+    from btc_research.btc_bot_2.journal.sqlite_journal  import Journal
 
 from btc_research.btc_bot_2.settings import (
     TP1_RR, TP2_RR, TRAIL_ATR_MULT, MAX_HOLD_BARS,
