@@ -14,13 +14,14 @@ Strategy : Volatility Breakout + Swing Level Break v2 (entry_mode="both", max_sl
   PnL       : +$20,354
   Max DD    : 13.1%
 
-  --- v2 FINAL — Mode 6 "both" 2×ATR SL cap (CHOSEN CONFIG) ---
-  Trades    : 370+  (break + retest entries combined)
-  Win Rate  : 42.6%
-  PnL       : +$89,362  (4.4× improvement over v1)
-  Max DD    : 18.3%
-  Prof halves : 5/5 (100%) | Quarters : 9/9 (100%) | Months : 23/24 (96%)
-  Decision matrix score : 5.42 (highest of all 7 tested modes)
+  --- v2 FINAL — Mode "both" 2×ATR + SWING-FIRST priority (CHOSEN CONFIG) ---
+  Trades    : 270  (break + retest + VB fallback)
+  Win Rate  : 46.7%
+  PnL       : +$119,329  (6× improvement over v1)
+  Max DD    : 17.5%
+  Prof halves : 5/5 (100%) | Quarters : 9/9 (100%) | Months : 24/24 (100%)
+  Max consec losing months : 0  |  PF : 2.50
+  Priority  : SwingLevelBreakV2 FIRST, VB fallback (vs VB-first: +33.5% more PnL)
 
 == WHY THESE HOURS ==
   Single-hour scan (2yr, EMA200+ADX20, VB+SL):

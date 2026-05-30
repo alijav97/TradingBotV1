@@ -101,18 +101,27 @@ class VBSwingStrategy(BTCStrategy):
     Two-strategy combiner for Asia Night + EU Open session.
     Kill-zone: hours [1, 2, 3, 8] UTC
 
-    Volatility Breakout fires first (momentum), Swing Level Break v2 second (structure).
+    PRIORITY: SwingLevelBreakV2 fires FIRST, VB fires as fallback.
 
-    Swing Level uses Mode 6 "both" with 2×ATR SL cap — the FINAL chosen config:
-      - Retest entry preferred (tight SL ~0.6×ATR): level broken, price returns, bar rejects
+    Why Swing first (validated by 2yr backtest):
+      SwingV2 → 46.7% WR  +0.90R avg  $119,329 PnL  MaxDD 17.5%  PF 2.50
+      VB first → 42.6% WR  +0.82R avg  $89,362  PnL  MaxDD 18.3%  PF 2.25
+      Swing-first wins on ALL metrics: +33.5% more PnL, higher WR, lower MaxDD.
+
+    Why the gap?
+      On bars where BOTH strategies fire, VB-first was discarding the higher-quality
+      Swing entry (47.3% WR, +1.14R on break entries) in favour of VB (41.8% WR).
+      VB is now the backup — it fires only when no Swing setup is present on that bar.
+      VB also becomes more selective as a result (56.2% WR when Swing-first).
+
+    Swing Level uses Mode "both" 2×ATR — the FINAL chosen config:
+      - Retest entry preferred (tight SL ~0.6×ATR): level broken, price comes back, bar rejects
       - Break entry fallback (SL capped at 2×ATR): first break of swing level
-    TP levels standardised to TP1=2R / TP2=5R for both sub-strategies —
-    matching the backtested configuration that produced $89,362 PnL / 42.6% WR
-    (decision matrix winner: 5/5 halves, 9/9 quarters, 23/24 months profitable).
+    TP levels standardised to TP1=2R / TP2=5R for both sub-strategies.
     """
 
-    name        = "VB + Swing Level v2 (Asia Night + EU Open)"
-    description = "Volatility Breakout > SwingLevelBreak v2 [both 2×ATR]  |  01,02,03,08 UTC"
+    name        = "Swing Level v2 + VB (Asia Night + EU Open)"
+    description = "SwingLevelBreak v2 [both 2xATR] > Volatility Breakout  |  01,02,03,08 UTC"
 
     def __init__(
         self,
@@ -121,9 +130,11 @@ class VBSwingStrategy(BTCStrategy):
         swing_entry_mode: str   = SWING_ENTRY_MODE,   # "both"
         swing_max_sl_atr: float = SWING_MAX_SL_ATR,   # 2.0
     ):
+        # SwingLevelBreakV2 FIRST — higher WR and AvgR
+        # VolatilityBreakout SECOND — fallback when no swing setup present
         self._strategies: list[BTCStrategy] = [
-            VolatilityBreakout(atr_multiplier=atr_multiplier, close_zone=close_zone),
             SwingLevelBreakV2(entry_mode=swing_entry_mode, max_sl_atr=swing_max_sl_atr),
+            VolatilityBreakout(atr_multiplier=atr_multiplier, close_zone=close_zone),
         ]
 
     def generate_signal(
@@ -133,7 +144,7 @@ class VBSwingStrategy(BTCStrategy):
         direction: str,
     ) -> dict:
         """
-        Try VB first, then Swing Level Break v2 (Mode 6 "both" 2×ATR).
+        Try SwingLevelBreakV2 first, then Volatility Breakout as fallback.
         Return first signal that fires.
 
         TP levels are STANDARDISED here — sub-strategy defaults are overridden
