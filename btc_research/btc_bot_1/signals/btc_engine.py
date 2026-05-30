@@ -188,6 +188,75 @@ class BTCSignalEngine:
             "current_atr":   round(current_atr, 2),
         }
 
+    def get_market_snapshot(self) -> dict:
+        """
+        Fetch current BTC indicators WITHOUT the kill-zone gate.
+
+        Called by the background scan job every 5 minutes so that by the time
+        21:00 UTC arrives, all data is fresh and pre-conditions are visible:
+          - current price vs EMA200 (which direction is valid?)
+          - ADX (is a trend forming?)
+          - ATR (current volatility)
+          - Pre-KZ range (17-21 UTC consolidation that strategy uses as Morning Range)
+          - Gold + NAS100 prices (inter-market correlation)
+
+        Returns empty dict on any failure (never raises).
+        """
+        try:
+            df_btc  = self._feed.get_ohlcv(SYMBOL,      "H1", _HISTORY_BARS)
+            df_gold = self._feed.get_ohlcv(GOLD_SYMBOL, "H1", 5)
+            df_nas  = self._feed.get_ohlcv(NAS_SYMBOL,  "H1", 5)
+
+            if df_btc.empty or len(df_btc) < EMA200_PERIOD + 20:
+                return {}
+
+            close_s = df_btc["close"].astype(float)
+            high_s  = df_btc["high"].astype(float)
+            low_s   = df_btc["low"].astype(float)
+
+            price  = float(close_s.iloc[-1])
+            ema200 = float(close_s.ewm(span=EMA200_PERIOD, adjust=False).mean().iloc[-1])
+            adx    = _calc_adx(high_s, low_s, close_s, ADX_PERIOD)
+
+            tr  = pd.concat([
+                high_s - low_s,
+                (high_s - close_s.shift(1)).abs(),
+                (low_s  - close_s.shift(1)).abs(),
+            ], axis=1).max(axis=1)
+            atr = float(tr.rolling(ADX_PERIOD).mean().iloc[-1])
+
+            # Pre-KZ range: 17-21 UTC bars formed today
+            now_utc = datetime.now(timezone.utc)
+            df_btc["time"] = pd.to_datetime(df_btc["time"], utc=True)
+            mr_mask = (
+                (df_btc["time"].dt.date == now_utc.date()) &
+                (df_btc["time"].dt.hour >= 17) &
+                (df_btc["time"].dt.hour < KZ_START_UTC)
+            )
+            mr_bars = df_btc[mr_mask]
+            mr_high = float(mr_bars["high"].max()) if not mr_bars.empty else None
+            mr_low  = float(mr_bars["low"].min())  if not mr_bars.empty else None
+
+            # Gold and NAS100 last close
+            gold_price = float(df_gold["close"].iloc[-1]) if not df_gold.empty else None
+            nas_price  = float(df_nas["close"].iloc[-1])  if not df_nas.empty else None
+
+            return {
+                "price":      round(price,  2),
+                "ema200":     round(ema200, 2),
+                "above_ema":  price > ema200,
+                "adx":        round(adx,   1),
+                "atr":        round(atr,   2),
+                "mr_high":    round(mr_high, 2) if mr_high else None,
+                "mr_low":     round(mr_low,  2) if mr_low  else None,
+                "mr_bars":    len(mr_bars),
+                "gold":       round(gold_price, 2) if gold_price else None,
+                "nas":        round(nas_price,  2) if nas_price  else None,
+            }
+        except Exception as exc:
+            logger.warning("get_market_snapshot error: %s", exc)
+            return {}
+
     @staticmethod
     def _empty_signal(direction: str) -> dict:
         return {

@@ -129,16 +129,50 @@ class BTCScheduler:
     # ── Job implementations ───────────────────────────────────────────────────
 
     def _job_scan_background(self) -> None:
-        """5-min scan outside kill-zone — keeps pre-KZ range data fresh."""
+        """
+        5-min background job outside kill-zone.
+
+        Does two things:
+          1. Fetches fresh OHLCV data for BTC, Gold, NAS100 so that EMA200,
+             ADX, ATR and the pre-KZ range are all up to date before 21:00 UTC.
+          2. Logs a readable snapshot so the operator can watch conditions
+             build throughout the day (EMA200 direction, ADX trend, pre-KZ range).
+        """
         _now = datetime.now(timezone.utc)
         if KZ_START_UTC <= _now.hour < KZ_END_UTC:
             return   # kill-zone job covers this window
+
         hours_to_kz = (KZ_START_UTC - _now.hour) % 24
-        logger.info(
-            "BTC background scan — UTC %02d:%02d | kill-zone in ~%dh (%d:00 UTC)",
-            _now.hour, _now.minute, hours_to_kz, KZ_START_UTC,
-        )
-        self._run_scan()
+        snap = self._engine.get_market_snapshot()
+
+        if snap:
+            ema_flag = "ABOVE EMA200 (longs valid)" if snap["above_ema"] else "BELOW EMA200 (shorts valid)"
+            adx_str  = (
+                f"{snap['adx']} — trend OK ✅"  if snap["adx"] >= 20
+                else f"{snap['adx']} — weak trend ⚠️"
+            )
+            if snap.get("mr_high"):
+                mr_str = (
+                    f"Pre-KZ range: ${snap['mr_high']:,.0f}-${snap['mr_low']:,.0f}  "
+                    f"(${snap['mr_high'] - snap['mr_low']:,.0f} range, {snap['mr_bars']} bars)"
+                )
+            else:
+                mr_str = "Pre-KZ range: not yet (17:00 UTC onwards)"
+
+            gold_str = f"  Gold: ${snap['gold']:,.2f}" if snap.get("gold") else ""
+            nas_str  = f"  NAS: ${snap['nas']:,.0f}"  if snap.get("nas")  else ""
+
+            logger.info(
+                "BTC snapshot UTC %02d:%02d | $%,.2f | %s | ADX %s | ATR $%.0f | %s |%s%s | KZ in ~%dh",
+                _now.hour, _now.minute,
+                snap["price"], ema_flag, adx_str, snap["atr"],
+                mr_str, gold_str, nas_str, hours_to_kz,
+            )
+        else:
+            logger.warning(
+                "BTC background snapshot failed — no data (UTC %02d:%02d, KZ in ~%dh)",
+                _now.hour, _now.minute, hours_to_kz,
+            )
 
     def _job_scan_killzone(self) -> None:
         """2-second scan — ONLY inside kill-zone (21-24 UTC)."""
