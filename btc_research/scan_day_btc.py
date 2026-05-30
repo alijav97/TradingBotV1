@@ -10,8 +10,9 @@ Mirrors scripts/scan_day.py for WTI but uses BTC Version D logic:
   - Trailing SL at 2×ATR after TP1
 
 Usage:
-    python btc_research/scan_day_btc.py            # defaults to yesterday
-    python btc_research/scan_day_btc.py 2026-05-29
+    python btc_research/scan_day_btc.py                        # defaults to yesterday
+    python btc_research/scan_day_btc.py 2026-05-29             # specific date
+    python btc_research/scan_day_btc.py 2026-05-29 --force     # force-refresh cache (stop bot first!)
 """
 from __future__ import annotations
 
@@ -50,11 +51,14 @@ KZ_END             = cfg.KZ_END_UTC     # 24
 
 
 # ── Date argument ─────────────────────────────────────────────────────────────
-if len(sys.argv) > 1:
+force_refresh = "--force" in sys.argv
+date_args = [a for a in sys.argv[1:] if not a.startswith("--")]
+
+if date_args:
     try:
-        target_date = date.fromisoformat(sys.argv[1])
+        target_date = date.fromisoformat(date_args[0])
     except ValueError:
-        print(f"ERROR: invalid date '{sys.argv[1]}' — use YYYY-MM-DD")
+        print(f"ERROR: invalid date '{date_args[0]}' — use YYYY-MM-DD")
         sys.exit(1)
 else:
     target_date = date.today() - timedelta(days=1)
@@ -67,13 +71,16 @@ if is_future:
     print(f"ERROR: {target_date} is in the future — can't backtest future data")
     sys.exit(1)
 
+if force_refresh:
+    print("NOTE: --force flag set — cache will be refreshed from MT5 (make sure bot is stopped!)")
+
 print("=" * 70)
 print(f"  BTC Bot 1 — Day Scan: {target_date}  (Version D Strategy)")
 print("=" * 70)
 
 # ── Fetch data ────────────────────────────────────────────────────────────────
 print("\nFetching data...")
-data   = fetch_all(use_cache=True, force_refresh=is_today)
+data   = fetch_all(use_cache=True, force_refresh=(is_today or force_refresh))
 df_btc = data.get(cfg.BTC_SYMBOL, pd.DataFrame())
 
 if df_btc.empty:
