@@ -218,7 +218,7 @@ def simulate(
                 if direction == "long"  and bc_ < ema96_now: continue
                 if direction == "short" and bc_ > ema96_now: continue
 
-            sig = strategy.generate_signal(win, bar_time, direction)
+            sig = strat.generate_signal(win, bar_time, direction)
             if not sig.get("signal"):
                 continue
 
