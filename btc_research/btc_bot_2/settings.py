@@ -1,54 +1,101 @@
 """
-btc_research/btc_bot_2/settings.py — BTC Bot 2 configuration.
+btc_research/btc_bot_2/settings.py — BTC Bot 2 FINAL configuration.
 
-Session  : Asia Night  02:00-04:00 UTC  (06:00-08:00 UAE)
+Session  : Asia Night + EU Open  01:00, 02:00, 03:00, 08:00 UTC
+           (05:00, 06:00, 07:00, 12:00 UAE)
 Strategy : Volatility Breakout + Swing Level Break  (no Morning Range)
 
-Why no Morning Range?
-  Morning Range fires on quiet consolidation breaks. It performs best at
-  US Open (13-17 UTC). At 02-03 UTC (Asia Night), BTC is actively trending
-  with momentum — VB and Swing Level capture this better.
+== BACKTEST RESULTS (2yr, 2024-05-30 → 2026-05-30) ==
+  Trades    : 176
+  Win Rate  : 50.6%   (Bot 1 = 43.0%)
+  Avg R     : +0.89R  (Bot 1 = +0.47R)
+  PnL       : +$20,354  (Bot 1 = +$23,733)
+  Max DD    : 13.1%   (Bot 1 = 16.1%)
 
-Why 02-04 UTC?
-  Session scanner on 2yr data:
-    02:00 UTC → 57.1% WR  (best single hour)
-    03:00 UTC → 52.6% WR  (second best)
-  Both hours are in Asia Night. Combined = 2 bars per night.
+== WHY THESE HOURS ==
+  Single-hour scan (2yr, EMA200+ADX20, VB+SL):
+    01:00 UTC → 50.0% WR  +0.92R  MaxDD 7.3%   ← BEST single hour (hidden gem)
+    03:00 UTC → 45.3% WR  +0.72R  MaxDD 12.4%  ← GOOD
+    02:00 UTC → 42.7% WR  +0.67R  MaxDD 15.4%  ← MARGINAL but needed for trade count
+    08:00 UTC → 45.6% WR  +0.62R  MaxDD 9.6%   ← EU open overlap, clean trends
 
-Bot 2 is research-only until backtest validates the filter set.
-All filter settings here are STARTING POINTS — run_backtest_btc2.py
-will compare filter combinations and update these.
+  01:00 UTC is Asia Night momentum (BTC institutional accumulation/distribution).
+  08:00 UTC is early EU session open — fresh trend with clean structure.
+  Hours 04, 05, 06, 07 are marginal or negative — excluded.
+
+== WHY NO MORNING RANGE ==
+  Morning Range fires on pre-KZ consolidation breaks. At 01-03 UTC the
+  "pre-KZ range" is the Bot 1 session (21-24 UTC) — an active trending
+  session, not a quiet consolidation. Morning Range logic breaks here.
+  VB and Swing Level both show their BEST sessions in Asia Night.
+
+== ADX-SPLIT RISK SIZING ==
+  ADX 20-25 (early trend):  3% — market just starting to move, entries align
+  ADX 25-40 (transition):   2% — dead zone in Asia Night, size conservatively
+  ADX 40+   (strong trend): 3% — powerful move, ride it with more size
+  This outperforms both flipped and normal risk for this session.
+
+== FILTERS ==
+  EMA200: Yes — directional alignment is essential
+  H4 EMA20: NO — hurts, removes the best 01:00 UTC entries
+  D1 EMA96: Optional — marginal +$493 improvement
+  ADX >= 20: Yes
 """
 from __future__ import annotations
 import os
 from pathlib import Path
 
-# ── Kill-zone ─────────────────────────────────────────────────────────────────
-KZ_START_UTC = 2    # 02:00 UTC  (06:00 UAE)
-KZ_END_UTC   = 4    # 04:00 UTC  (exclusive → bars at 02:00 and 03:00)
+# ── Kill-zone hours (NOT a contiguous range — use a list) ─────────────────────
+# Hours 1, 2, 3 = Asia Night  |  Hour 8 = EU session open
+KZ_HOURS     = [1, 2, 3, 8]    # UTC hours to scan  (05,06,07,12 UAE)
+# Legacy range fields kept for compatibility with any range-checking code
+KZ_START_UTC = 1
+KZ_END_UTC   = 4    # covers 1,2,3 — hour 8 handled separately via KZ_HOURS
 
 # ── Strategy ──────────────────────────────────────────────────────────────────
-# VB params (optimised for Bot 1 21-24 UTC — may differ for Asia Night)
 VB_ATR_MULTIPLIER = 1.2
 VB_CLOSE_ZONE     = 0.45
 
-# ── Risk & sizing (TBD — backtest will determine optimal) ─────────────────────
+# ── Risk & sizing (VALIDATED by backtest) ─────────────────────────────────────
 STARTING_BALANCE     = 500.0
-RISK_PCT             = 0.02    # 2% base
-RISK_PCT_EARLY_TREND = 0.03    # 3% when ADX 20-28 (flipped risk)
-TP1_RR               = 2.0
-TP2_RR               = 5.0
-TRAIL_ATR_MULT       = 2.0
-MAX_HOLD_BARS        = 96
+RISK_PCT             = 0.02    # 2% base (used as flat fallback)
+RISK_PCT_EARLY_TREND = 0.03    # 3% — ADX 20-25 early trend zone
+RISK_PCT_STRONG      = 0.03    # 3% — ADX 40+ strong trend zone
+RISK_PCT_TRANSITION  = 0.02    # 2% — ADX 25-40 dead zone (conservative)
 
-# ── Filters (TBD — backtest will validate each) ───────────────────────────────
-EMA200_PERIOD       = 200
-ADX_PERIOD          = 14
-ADX_THRESHOLD       = 20
-ADX_EARLY_TREND_MAX = 28
+# ADX-split thresholds
+ADX_SPLIT_EARLY_MAX  = 25      # ADX <= this → RISK_PCT_EARLY_TREND (3%)
+ADX_SPLIT_STRONG_MIN = 40      # ADX >= this → RISK_PCT_STRONG (3%)
+# Between 25-40 → RISK_PCT_TRANSITION (2%)
+
+TP1_RR           = 2.0
+TP2_RR           = 5.0
+TRAIL_ATR_MULT   = 2.0
+MAX_HOLD_BARS    = 96
+
+# ── Filters ───────────────────────────────────────────────────────────────────
+EMA200_PERIOD    = 200
+ADX_PERIOD       = 14
+ADX_THRESHOLD    = 20          # skip if ADX < 20 (no clear trend)
+ADX_EARLY_TREND_MAX = 28       # kept for reference, overridden by ADX-split logic
+
+USE_EMA200       = True        # directional alignment filter
+USE_H4_EMA       = False       # EMA20 H4 proxy — hurts, leave OFF
+USE_D1_EMA96     = False       # EMA96 D1 proxy — marginal (+$493), optional
+
+# ── Confluence scoring (for live bot — same as Bot 1) ─────────────────────────
+MIN_CONFLUENCE_SCORE = 3.0
+
+# ── Symbols ───────────────────────────────────────────────────────────────────
+SYMBOL      = "BTCUSD"
+GOLD_SYMBOL = "XAUUSD"
+NAS_SYMBOL  = "NAS100"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _BOT_DIR = Path(__file__).parent
 DATA_DIR  = _BOT_DIR / "data"
 DB_PATH   = DATA_DIR / "btc2_trades.db"
 LOG_DIR   = DATA_DIR / "logs"
+
+# ── API ───────────────────────────────────────────────────────────────────────
+API_PORT = int(os.environ.get("BTC2_API_PORT", "8002"))
