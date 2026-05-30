@@ -103,15 +103,17 @@ def simulate(
     adx_threshold:    float = 20.0,
     use_ema200:       bool  = False,
     flipped_risk:     bool  = False,
+    adx_split_risk:   bool  = False,
     trail_atr_mult:   float = 2.0,
     label:            str   = "",
 ) -> list[dict]:
     """
-    Bar-by-bar simulation for Bot 2 session (02-04 UTC).
+    Bar-by-bar simulation for Bot 2 session [1,2,3,8] UTC.
 
     adx_threshold  : minimum ADX to take a trade
     use_ema200     : skip longs below EMA200 / shorts above EMA200
     flipped_risk   : 3% risk if ADX 20-28 (early trend), 2% if ADX > 28
+    adx_split_risk : 3% if ADX<=25, 2% if ADX 25-40, 3% if ADX>=40 (FINAL config)
     trail_atr_mult : trailing SL after TP1 = this × ATR
     """
     balance = float(b2cfg.STARTING_BALANCE)
@@ -223,7 +225,15 @@ def simulate(
                 continue
 
             # Risk sizing
-            if flipped_risk:
+            if adx_split_risk:
+                # FINAL config: 3% ADX<=25, 2% ADX 25-40, 3% ADX>=40
+                if adx_now >= b2cfg.ADX_SPLIT_STRONG_MIN:
+                    risk_pct = b2cfg.RISK_PCT_STRONG        # 3% — strong trend
+                elif adx_now <= b2cfg.ADX_SPLIT_EARLY_MAX:
+                    risk_pct = b2cfg.RISK_PCT_EARLY_TREND   # 3% — early trend
+                else:
+                    risk_pct = b2cfg.RISK_PCT_TRANSITION    # 2% — dead zone
+            elif flipped_risk:
                 risk_pct = b2cfg.RISK_PCT_EARLY_TREND if adx_now <= b2cfg.ADX_EARLY_TREND_MAX else b2cfg.RISK_PCT
             else:
                 risk_pct = b2cfg.RISK_PCT
@@ -298,34 +308,37 @@ strat = VBSwingStrategy(
     close_zone=b2cfg.VB_CLOSE_ZONE,
 )
 
-print("\nRunning 7 filter variants on 2yr data (02:00-04:00 UTC)...")
+print("\nRunning 8 filter variants on 2yr data ([1,2,3,8] UTC)...")
 print("This may take 1-2 minutes...\n")
 
 variants = [
-    # label,                   adx_thresh, ema200, flip_risk
-    ("A  Baseline (ADX>=20)",         20,  False,  False),
-    ("B  + EMA200",                   20,  True,   False),
-    ("C  + ADX>=25",                  25,  False,  False),
-    ("D  EMA200 + ADX>=25",           25,  True,   False),
-    ("E  EMA200 + Flip Risk",         20,  True,   True),
-    ("F  EMA200+ADX25+Flip Risk",     25,  True,   True),
-    ("G  EMA200 + ADX>=20 (Bot1 set)",20,  True,   False),
+    # label,                       adx_thresh, ema200, flip_risk, adx_split
+    ("A  Baseline (ADX>=20)",             20,  False,  False,     False),
+    ("B  + EMA200",                       20,  True,   False,     False),
+    ("C  + ADX>=25",                      25,  False,  False,     False),
+    ("D  EMA200 + ADX>=25",               25,  True,   False,     False),
+    ("E  EMA200 + Flip Risk",             20,  True,   True,      False),
+    ("F  EMA200+ADX25+Flip Risk",         25,  True,   True,      False),
+    ("G  EMA200 + ADX>=20 (Bot1 set)",    20,  True,   False,     False),
+    ("H  EMA200 + ADX-split *** FINAL",   20,  True,   False,     True),
 ]
 
 results = {}
-for label, adx_t, ema200, flip in variants:
-    t = simulate(strat, adx_threshold=adx_t, use_ema200=ema200, flipped_risk=flip, label=label)
+for label, adx_t, ema200, flip, adx_split in variants:
+    t = simulate(strat, adx_threshold=adx_t, use_ema200=ema200,
+                 flipped_risk=flip, adx_split_risk=adx_split, label=label)
     results[label] = (t, _stats(t))
-    print(f"  {label:35s}  trades={_stats(t)['n']:3d}  WR={_stats(t)['wr']:5.1f}%  "
+    tag = " ◄◄◄ FINAL CONFIG" if adx_split else ""
+    print(f"  {label:40s}  trades={_stats(t)['n']:3d}  WR={_stats(t)['wr']:5.1f}%  "
           f"AvgR={_stats(t)['avgr']:+.2f}R  PnL=${_stats(t)['pnl']:+,.2f}  "
-          f"MaxDD={_stats(t)['maxdd']:.1f}%")
+          f"MaxDD={_stats(t)['maxdd']:.1f}%{tag}")
 
 
 # ── Summary table ─────────────────────────────────────────────────────────────
 W = 100
 print()
 print("=" * W)
-print("  BTC BOT 2 — FILTER COMPARISON  |  Asia Night 02:00-04:00 UTC  |  VB + Swing Level")
+print("  BTC BOT 2 — FILTER COMPARISON  |  [01,02,03,08] UTC (Asia Night + EU Open)  |  VB + Swing Level")
 print(f"  2yr data: {df_btc.index[0].date()} → {df_btc.index[-1].date()}")
 print("=" * W)
 print(f"  {'Variant':38s}  {'#':>4}  {'WR%':>6}  {'AvgR':>6}  {'PnL $':>9}  {'Bal $':>8}  {'MaxDD%':>7}")
