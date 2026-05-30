@@ -173,20 +173,25 @@ class Journal:
 
         Required keys: symbol, direction, entry_price, stop_loss, lot_size
         Optional: tp1_price, tp2_price, strategy, confluence_score, timeframe,
-                  session, regime, news_score, raw_signal (dict)
+                  session, regime, news_score, notes, original_sl, exit_atr,
+                  raw_signal (dict or str)
         """
         tid = str(uuid.uuid4())
         now = _now()
+
+        # raw_signal may be passed as a pre-serialised string (from BTC Bot 2)
+        raw = trade.get("raw_signal", {})
+        raw_signal_str = raw if isinstance(raw, str) else json.dumps(raw)
 
         self._conn.execute("""
             INSERT INTO trades (
                 id, symbol, direction, entry_price, stop_loss, tp1_price, tp2_price,
                 lot_size, status, open_time, strategy, confluence_score, timeframe,
-                session, regime, news_score, raw_signal
+                session, regime, news_score, notes, raw_signal
             ) VALUES (
                 :id, :symbol, :direction, :entry_price, :stop_loss, :tp1_price, :tp2_price,
                 :lot_size, 'OPEN', :open_time, :strategy, :confluence_score, :timeframe,
-                :session, :regime, :news_score, :raw_signal
+                :session, :regime, :news_score, :notes, :raw_signal
             )
         """, {
             "id":               tid,
@@ -204,12 +209,19 @@ class Journal:
             "session":          trade.get("session", ""),
             "regime":           trade.get("regime", ""),
             "news_score":       trade.get("news_score"),
-            "raw_signal":       json.dumps(trade.get("raw_signal", {})),
+            "notes":            trade.get("notes", ""),
+            "raw_signal":       raw_signal_str,
         })
-        # Preserve original SL separately so it survives BE moves
+        # Preserve original SL (use explicit value if provided, else copy stop_loss)
+        original_sl = trade.get("original_sl")
+        exit_atr    = trade.get("exit_atr")     # ATR at open — stored for trailing SL
         self._conn.execute(
-            "UPDATE trades SET original_sl=stop_loss, factors_json=? WHERE id=?",
-            (json.dumps(trade.get("factors", {})), tid)
+            """UPDATE trades
+               SET original_sl  = COALESCE(?, stop_loss),
+                   exit_atr     = ?,
+                   factors_json = ?
+               WHERE id = ?""",
+            (original_sl, exit_atr, json.dumps(trade.get("factors", {})), tid)
         )
         self._conn.commit()
         logger.info("Trade opened: %s %s %s @ %.5f", tid[:8], trade["symbol"], trade["direction"], trade["entry_price"])
@@ -304,6 +316,40 @@ class Journal:
             (new_sl, trade_id)
         )
         self._conn.commit()
+
+    def update_trade(self, trade_id: str, updates: dict) -> bool:
+        """
+        Generic field update for an open trade.
+
+        Accepted keys: stop_loss, tp1_hit, be_moved, notes, status, exit_atr.
+        Used by BTC Bot 2 paper_trader for TP1 hits, trailing SL, and BE moves.
+        Returns True if the row was found and updated.
+        """
+        _allowed = {"stop_loss", "tp1_hit", "be_moved", "notes", "status", "exit_atr"}
+        cols = {k: v for k, v in updates.items() if k in _allowed}
+        if not cols:
+            logger.warning("update_trade: no valid fields in %s", list(updates.keys()))
+            return False
+        set_clause = ", ".join(f"{k}=?" for k in cols)
+        params     = list(cols.values()) + [trade_id]
+        cursor = self._conn.execute(
+            f"UPDATE trades SET {set_clause} WHERE id=? AND status='OPEN'",
+            params
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def get_open_trades_count(self, symbol: str | None = None) -> int:
+        """Fast count of open trades without fetching rows."""
+        if symbol:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM trades WHERE status='OPEN' AND symbol=?", (symbol,)
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM trades WHERE status='OPEN'"
+            ).fetchone()
+        return row[0] if row else 0
 
     def get_open_trades(self, symbol: str | None = None) -> list[dict]:
         """Return all open trades, optionally filtered by symbol."""

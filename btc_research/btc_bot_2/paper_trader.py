@@ -186,7 +186,7 @@ class BTC2PaperTrader:
         atr_at_open = float(trade.get("exit_atr") or 0)   # stored ATR (reused field)
         lot       = float(trade.get("lot_size", 0.001))
         is_long   = direction.lower() == "long"
-        symbol    = trade.get("feed_symbol", "BTCUSDT")
+        symbol    = trade.get("feed_symbol", "BTCUSD")   # MT5 symbol (Pepperstone)
 
         # Max hold check
         open_time_str = trade.get("open_time", "")
