@@ -246,12 +246,40 @@ Get-ScheduledTask   -TaskName "TradingBotV1"   # check status
 ---
 
 ### WTI BOT (v2)
-- **Strategy**: NYMomentumWTI
-- **Active window**: 13:00–17:00 UTC (NY / NYMEX session open)
+- **Strategy**: NYMomentumWTI — London range breakout at NYMEX open
 - **Instrument**: WTI Crude Oil (Pepperstone MT5: SpotCrude)
+- **Range forms**: 08:00–13:00 UTC (London session)
+- **Entries allowed**: 13:00–17:00 UTC (NY/NYMEX open) only
 - **Scan**: Every 5min on H1
+
+#### Entry filter chain:
+```
+1. Time gate        → UTC 13:00–17:00 only
+2. London range     → >= 3 H1 bars, range >= 25% of ATR (not flat)
+3. Breakout + close → bar must CLOSE beyond London high (long) or low (short)
+                      wick-only breakouts are rejected
+4. Not chasing      → price within 1.5×ATR of broken level
+5. Score >= 7.0     → confluence scoring (max 10.0):
+                        Session freshness    0.5–2.5
+                        London range quality 0.0–2.0
+                        Entry quality        0.5–2.0 (retest scores higher)
+                        HTF alignment        0.0–1.5
+                        Volume spike         0.0–1.0
+                        Closed beyond level  0.0–1.0
+```
+
+#### SL / TP:
+- **SL**: 1.2×ATR from entry — capped at opposite London range extreme
+- **TP1**: 2R → 50% partial close + SL moves to breakeven
+- **TP2**: 5R → remaining 50% full close
+
+#### Risk limits:
+- **2% risk per trade** · max 2 open trades · 9% max portfolio heat
+- Daily loss limit: 6% · Weekly loss limit: 12%
+
 - **Telegram**: `TELEGRAM_BOT_TOKEN`
 - **Trade DB**: C:\TradingBotV2\data\v2_trades.db
+- **Run via**: Windows Task Scheduler job `TradingBotV1` (auto-starts on VPS reboot)
 
 ---
 
