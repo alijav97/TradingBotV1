@@ -137,9 +137,8 @@ class TelegramAlerter:
 
         url     = _TELEGRAM_API.format(token=self._token)
         payload = {
-            "chat_id":    self._chat_id,
-            "text":       message,
-            "parse_mode": "HTML",
+            "chat_id": self._chat_id,
+            "text":    message,
         }
         try:
             resp = requests.post(url, json=payload, timeout=_TIMEOUT_SEC)
