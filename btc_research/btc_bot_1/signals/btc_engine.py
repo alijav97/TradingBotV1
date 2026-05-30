@@ -60,7 +60,7 @@ class BTCSignalEngine:
 
         # ── Kill-zone gate ────────────────────────────────────────────────────
         now_utc = datetime.now(timezone.utc)
-        in_kz = (KZ_START_UTC <= now_utc.hour < 24) or (now_utc.hour == 0 and KZ_END_UTC == 24)
+        in_kz = KZ_START_UTC <= now_utc.hour < 24   # 21,22,23 only — midnight is NOT in KZ
         if not in_kz:
             _empty["blocked_by"] = f"outside kill-zone (UTC {now_utc.hour:02d}:xx)"
             return _empty

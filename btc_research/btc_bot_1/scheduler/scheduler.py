@@ -139,7 +139,7 @@ class BTCScheduler:
         """2-second scan — ONLY inside kill-zone (21-24 UTC)."""
         _now = datetime.now(timezone.utc)
         # Handle midnight wrap: KZ_END_UTC = 24 means hour 0 is still in range
-        in_kz = (KZ_START_UTC <= _now.hour < 24) or (_now.hour == 0 and KZ_END_UTC == 24)
+        in_kz = KZ_START_UTC <= _now.hour < 24   # 21,22,23 only
         if not in_kz:
             return
         self._run_scan()
@@ -147,7 +147,7 @@ class BTCScheduler:
     def _job_post_killzone_watch(self) -> None:
         """5-second trade monitor after kill-zone closes, while BTC trade is open."""
         _now = datetime.now(timezone.utc)
-        in_kz = (KZ_START_UTC <= _now.hour < 24) or (_now.hour == 0 and KZ_END_UTC == 24)
+        in_kz = KZ_START_UTC <= _now.hour < 24   # 21,22,23 only
         if in_kz:
             return   # kill-zone job handles this
 
