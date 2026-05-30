@@ -55,10 +55,15 @@ _file_handler = logging.handlers.RotatingFileHandler(
     backupCount = 7,
     encoding    = "utf-8",
 )
-_file_handler.setFormatter(logging.Formatter(_log_fmt, datefmt=_log_datefmt))
+import time as _time
+_fmt_utc = logging.Formatter(_log_fmt, datefmt=_log_datefmt)
+_fmt_utc.converter = _time.gmtime   # force UTC timestamps in logs
+_file_handler.setFormatter(_fmt_utc)
 
 _console_handler = logging.StreamHandler(sys.stdout)
-_console_handler.setFormatter(logging.Formatter(_log_fmt, datefmt=_log_datefmt))
+_console_handler_fmt = logging.Formatter(_log_fmt, datefmt=_log_datefmt)
+_console_handler_fmt.converter = _time.gmtime
+_console_handler.setFormatter(_console_handler_fmt)
 
 logging.basicConfig(
     level    = logging.INFO,
