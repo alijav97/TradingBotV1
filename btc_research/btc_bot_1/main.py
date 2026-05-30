@@ -34,7 +34,7 @@ from typing import Any
 try:
     from dotenv import load_dotenv
     _env_path = Path(os.environ.get("ENV_FILE",
-                     Path(__file__).resolve().parents[3] / ".env"))
+                     Path(__file__).resolve().parents[2] / ".env"))
     if _env_path.exists():
         load_dotenv(_env_path, override=True)
 except ImportError:
