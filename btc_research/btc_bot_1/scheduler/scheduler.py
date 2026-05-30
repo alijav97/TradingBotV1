@@ -162,10 +162,12 @@ class BTCScheduler:
             gold_str = f"  Gold: ${snap['gold']:,.2f}" if snap.get("gold") else ""
             nas_str  = f"  NAS: ${snap['nas']:,.0f}"  if snap.get("nas")  else ""
 
+            price_str = f"${snap['price']:,.2f}"
+            atr_str   = f"${snap['atr']:,.0f}"
             logger.info(
-                "BTC snapshot UTC %02d:%02d | $%,.2f | %s | ADX %s | ATR $%.0f | %s |%s%s | KZ in ~%dh",
+                "BTC snapshot UTC %02d:%02d | %s | %s | ADX %s | ATR %s | %s |%s%s | KZ in ~%dh",
                 _now.hour, _now.minute,
-                snap["price"], ema_flag, adx_str, snap["atr"],
+                price_str, ema_flag, adx_str, atr_str,
                 mr_str, gold_str, nas_str, hours_to_kz,
             )
         else:
