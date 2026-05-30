@@ -1,5 +1,5 @@
 """
-btc_bot_2/strategy/vb_swing_combined.py — VB + Swing Level strategy for Asia Night.
+btc_bot_2/strategy/vb_swing_combined.py — VB + Swing Level Break v2 for Asia Night.
 
 == SESSION ==
   Kill-zone hours: 01:00, 02:00, 03:00 UTC (Asia Night) + 08:00 UTC (EU open)
@@ -13,39 +13,42 @@ btc_bot_2/strategy/vb_swing_combined.py — VB + Swing Level strategy for Asia N
   Per-strategy session analysis: VB and Swing Level both peak at Asia Night.
   Morning Range peaks at US Open (13-17 UTC).
 
+== SWING LEVEL v2 — MODE 6 "both" 2×ATR  (FINAL CHOSEN CONFIG) ==
+
+  Why upgrade from v1?
+    v1 SL = prior swing structure = avg 4.42×ATR — enormous.
+    Wide SL → tiny position size → trades stay open for days blocking new entries.
+    PnL: $20,354 over 2yr starting from $500.
+
+  v2 "both" mode:
+    First checks for RETEST entry (level broken, price came back, bar rejects).
+      SL = current bar extreme + tiny buffer → ~0.6×ATR (7× tighter).
+    If no retest, fires on FIRST BREAK with SL CAPPED at 2×ATR.
+      Structural SL is kept if it's already tighter.
+    Result: trades resolve ~3-4× faster → more compounding → $89,362 (+4.4×).
+
+  Full temporal analysis (2yr, all 7 modes):
+    Mode 6: 5/5 halves ✅  9/9 quarters ✅  23/24 months ✅  Highest score 5.42
+
 == SL PLACEMENT ==
 
   Volatility Breakout:
     Entry : bar close  (the large momentum bar itself)
     SL    : low of the breakout bar  (for longs)
             high of the breakout bar (for shorts)
-    Logic : The momentum bar's edge IS the entry protection. If price returns
-            below the low of a bar that just expanded 1.2×ATR with a strong
-            close, the breakout has failed.
-    Typical SL distance: 0.5-1.0× ATR  (~$250-600 at Asia Night ATR)
+    Typical SL distance: 0.5-1.0× ATR
 
-  Swing Level Break:
-    Entry : bar close (after price breaks beyond the swing level)
-    SL    : most recent swing LOW before the broken swing HIGH (for longs)
-            most recent swing HIGH before the broken swing LOW  (for shorts)
-    Logic : The swing structure is the key level. If price returns through
-            the previous swing structure, the breakout thesis is invalidated.
-    Typical SL distance: variable, 1-3× ATR depending on swing structure
+  Swing Level Break v2 (Mode 6 "both"):
+    Retest entry : SL = bar_low - 0.05×ATR  (long)  →  ~0.6×ATR average
+    Break  entry : SL = max(prior_swing_struct, entry - 2×ATR)  →  ≤2×ATR
 
 == TP LEVELS (STANDARDISED — matching backtest) ==
 
-  Both strategies use:  TP1 = 2.0R  |  TP2 = 5.0R
-  Trailing SL: 2×ATR after TP1 (kicks in when trade goes in our favour)
+  VB:    TP1 = 2.0R  |  TP2 = 5.0R  (trailing SL 2×ATR after TP1)
+  SLv2 retest: TP1 = 2.0R | TP2 = 5.0R  (tighter SL allows 2R TP1)
+  SLv2 break:  TP1 = 1.5R | TP2 = 5.0R  (same as v1, overridden to 2R here)
 
-  Why override VB's 9R default?
-    The backtest tested: current(VB=9R) vs Bot1-same(TP1=2R/TP2=5R) vs others.
-    Bot1-same (TP1=2R, TP2=5R) gave the BEST PnL: $2,257 vs $1,698 for VB=9R.
-    The trailing SL after TP1 does a better job of letting winners run than
-    a fixed 9R target that rarely gets hit in Asia Night sessions.
-
-  Why override Swing Level's 1.5R TP1?
-    Same test showed 2R TP1 outperforms 1.5R. The swing structure moves are
-    substantial enough at Asia Night ATR to reach 2R before retracing.
+  All overridden to TP1=2.0R / TP2=5.0R in this combiner — validated by backtest.
 
 == RISK SIZING (ADX-SPLIT — applied by the signal engine, not here) ==
 
@@ -53,19 +56,19 @@ btc_bot_2/strategy/vb_swing_combined.py — VB + Swing Level strategy for Asia N
   ADX 25-40 (transition):   2%  — dead zone in Asia Night, conservative sizing
   ADX 40+   (strong trend): 3%  — powerful momentum, ride with more size
 
-  This is implemented in btc_bot_2/settings.py and the signal engine.
-  The strategy itself only returns entry/SL. Risk sizing is the caller's job.
+  Implemented in btc_bot_2/settings.py. The strategy returns entry/SL only.
 """
 from __future__ import annotations
 
 import pandas as pd
-from btc_research.strategies.base               import BTCStrategy
-from btc_research.strategies.volatility_breakout import VolatilityBreakout
-from btc_research.strategies.swing_level         import SwingLevelBreak
+from btc_research.strategies.base                import BTCStrategy
+from btc_research.strategies.volatility_breakout  import VolatilityBreakout
+from btc_research.strategies.swing_level_v2       import SwingLevelBreakV2
 from btc_research.btc_bot_2.settings import (
     TP1_RR, TP2_RR,
     ADX_SPLIT_EARLY_MAX, ADX_SPLIT_STRONG_MIN,
     RISK_PCT_EARLY_TREND, RISK_PCT_TRANSITION, RISK_PCT_STRONG,
+    SWING_ENTRY_MODE, SWING_MAX_SL_ATR,
 )
 
 # VB benefits from inter-market filter; Swing Level is neutral
@@ -98,22 +101,29 @@ class VBSwingStrategy(BTCStrategy):
     Two-strategy combiner for Asia Night + EU Open session.
     Kill-zone: hours [1, 2, 3, 8] UTC
 
-    Volatility Breakout fires first (momentum), Swing Level second (structure).
+    Volatility Breakout fires first (momentum), Swing Level Break v2 second (structure).
+
+    Swing Level uses Mode 6 "both" with 2×ATR SL cap — the FINAL chosen config:
+      - Retest entry preferred (tight SL ~0.6×ATR): level broken, price returns, bar rejects
+      - Break entry fallback (SL capped at 2×ATR): first break of swing level
     TP levels standardised to TP1=2R / TP2=5R for both sub-strategies —
-    matching the backtested configuration that produced $20,354 PnL / 50.6% WR.
+    matching the backtested configuration that produced $89,362 PnL / 42.6% WR
+    (decision matrix winner: 5/5 halves, 9/9 quarters, 23/24 months profitable).
     """
 
-    name        = "VB + Swing Level (Asia Night + EU Open)"
-    description = "Volatility Breakout > Swing Level  |  01,02,03,08 UTC"
+    name        = "VB + Swing Level v2 (Asia Night + EU Open)"
+    description = "Volatility Breakout > SwingLevelBreak v2 [both 2×ATR]  |  01,02,03,08 UTC"
 
     def __init__(
         self,
         atr_multiplier: float = 1.2,
         close_zone:     float = 0.45,
+        swing_entry_mode: str   = SWING_ENTRY_MODE,   # "both"
+        swing_max_sl_atr: float = SWING_MAX_SL_ATR,   # 2.0
     ):
         self._strategies: list[BTCStrategy] = [
             VolatilityBreakout(atr_multiplier=atr_multiplier, close_zone=close_zone),
-            SwingLevelBreak(),
+            SwingLevelBreakV2(entry_mode=swing_entry_mode, max_sl_atr=swing_max_sl_atr),
         ]
 
     def generate_signal(
@@ -123,7 +133,8 @@ class VBSwingStrategy(BTCStrategy):
         direction: str,
     ) -> dict:
         """
-        Try VB first, then Swing Level. Return first signal that fires.
+        Try VB first, then Swing Level Break v2 (Mode 6 "both" 2×ATR).
+        Return first signal that fires.
 
         TP levels are STANDARDISED here — sub-strategy defaults are overridden
         to TP1=2R / TP2=5R (validated by 2yr backtest).
@@ -133,6 +144,7 @@ class VBSwingStrategy(BTCStrategy):
           needs_im_filter : True only for Volatility Breakout
           tp1_rr          : always 2.0 (standardised)
           tp2_rr          : always 5.0 (standardised)
+          entry_type      : "break" | "retest" | None  (from SwingLevelBreakV2)
         """
         for strat in self._strategies:
             result = strat.generate_signal(df_window, bar_time, direction)

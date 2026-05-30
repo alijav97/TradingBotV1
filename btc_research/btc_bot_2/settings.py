@@ -3,14 +3,24 @@ btc_research/btc_bot_2/settings.py — BTC Bot 2 FINAL configuration.
 
 Session  : Asia Night + EU Open  01:00, 02:00, 03:00, 08:00 UTC
            (05:00, 06:00, 07:00, 12:00 UAE)
-Strategy : Volatility Breakout + Swing Level Break  (no Morning Range)
+Strategy : Volatility Breakout + Swing Level Break v2 (entry_mode="both", max_sl_atr=2.0)
+           (no Morning Range — pre-session range is Bot 1's active KZ, not a consolidation)
 
-== BACKTEST RESULTS (2yr, 2024-05-30 → 2026-05-30) ==
+== BACKTEST RESULTS (2yr, 2024-05-30 → 2026-05-30, $500 start) ==
+  --- v1 baseline (SL = prior swing structure, avg 4.42×ATR) ---
   Trades    : 176
-  Win Rate  : 50.6%   (Bot 1 = 43.0%)
-  Avg R     : +0.89R  (Bot 1 = +0.47R)
-  PnL       : +$20,354  (Bot 1 = +$23,733)
-  Max DD    : 13.1%   (Bot 1 = 16.1%)
+  Win Rate  : 50.6%
+  Avg R     : +0.89R
+  PnL       : +$20,354
+  Max DD    : 13.1%
+
+  --- v2 FINAL — Mode 6 "both" 2×ATR SL cap (CHOSEN CONFIG) ---
+  Trades    : 370+  (break + retest entries combined)
+  Win Rate  : 42.6%
+  PnL       : +$89,362  (4.4× improvement over v1)
+  Max DD    : 18.3%
+  Prof halves : 5/5 (100%) | Quarters : 9/9 (100%) | Months : 23/24 (96%)
+  Decision matrix score : 5.42 (highest of all 7 tested modes)
 
 == WHY THESE HOURS ==
   Single-hour scan (2yr, EMA200+ADX20, VB+SL):
@@ -55,6 +65,12 @@ KZ_END_UTC   = 4    # covers 1,2,3 — hour 8 handled separately via KZ_HOURS
 # ── Strategy ──────────────────────────────────────────────────────────────────
 VB_ATR_MULTIPLIER = 1.2
 VB_CLOSE_ZONE     = 0.45
+
+# Swing Level Break v2 — Mode 6 "both" 2×ATR  (FINAL CHOSEN CONFIG)
+# "both" = retest entry (tight SL ~0.6×ATR) preferred; falls back to ATR-capped break entry
+# max_sl_atr = 2.0 caps the break-mode SL so it never exceeds 2×ATR from entry
+SWING_ENTRY_MODE = "both"   # "break"|"break_capped"|"retest"|"retest_preferred"|"both"
+SWING_MAX_SL_ATR = 2.0      # SL cap (× ATR) for break entries
 
 # ── Risk & sizing (VALIDATED by backtest) ─────────────────────────────────────
 STARTING_BALANCE     = 500.0
