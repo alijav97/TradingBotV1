@@ -22,12 +22,15 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+import pandas as pd
+
 if TYPE_CHECKING:
     from btc_research.btc_bot_1.journal.sqlite_journal import Journal
     from btc_research.btc_bot_1.connectors.unified_data import DataFeed
 
 from btc_research.btc_bot_1.settings import (
-    SYMBOL, RISK_PCT, TP1_RR, TP2_RR, MAX_HOLD_HOURS,
+    SYMBOL, RISK_PCT, RISK_PCT_EARLY_TREND, TP1_RR, TP2_RR,
+    MAX_HOLD_HOURS, TRAIL_ATR_MULT, ADX_PERIOD,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,8 +77,11 @@ class PaperTrader:
                 return None
 
             # Position sizing: BTC units = risk_usd / sl_distance
+            # Version D flipped risk: signal carries the correct risk_pct
+            # (3% if ADX 20-28, 2% if ADX > 28)
             current_balance = self._journal.get_paper_balance()
-            risk_usd        = current_balance * RISK_PCT
+            risk_pct        = signal.get("risk_pct", RISK_PCT)   # from btc_engine
+            risk_usd        = current_balance * risk_pct
             sl_dist         = abs(entry - sl)
             if sl_dist <= 0:
                 logger.warning("BTC: zero SL distance — blocking trade")
@@ -135,15 +141,16 @@ class PaperTrader:
         Check a single open trade against current BTC price.
         Returns action dict if SL/TP/max-hold triggered, else None.
         """
-        trade_id  = trade["id"]
-        direction = trade["direction"]
-        entry     = float(trade["entry_price"])
-        sl        = float(trade["stop_loss"])
-        tp1       = float(trade["tp1_price"] or 0)
-        tp2       = float(trade["tp2_price"] or 0)
-        lot_size  = float(trade["lot_size"])
-        tp1_hit   = bool(trade.get("tp1_hit", 0))
-        open_time = trade.get("open_time", "")
+        trade_id    = trade["id"]
+        direction   = trade["direction"]
+        entry       = float(trade["entry_price"])
+        sl          = float(trade["stop_loss"])
+        tp1         = float(trade["tp1_price"] or 0)
+        tp2         = float(trade["tp2_price"] or 0)
+        lot_size    = float(trade["lot_size"])
+        tp1_hit     = bool(trade.get("tp1_hit", 0))
+        open_time   = trade.get("open_time", "")
+        original_sl = float(trade.get("original_sl") or trade["stop_loss"])
 
         # Get live BTC price (5s timeout)
         try:
@@ -187,7 +194,7 @@ class PaperTrader:
         # ── SL ────────────────────────────────────────────────────────────────
         if (is_long and current_price <= sl) or (not is_long and current_price >= sl):
             sl_reason = "SL_AFTER_TP1" if tp1_hit else "SL"
-            pnl = self._calc_pnl(entry, sl, direction, lot_size, sl)
+            pnl = self._calc_pnl(entry, sl, direction, lot_size, original_sl)
             self._journal.close_trade(
                 trade_id, sl, sl_reason,
                 pnl_usd=pnl[0], rr_achieved=pnl[1],
@@ -205,10 +212,32 @@ class PaperTrader:
                             trade_id[:8], tp1, entry)
                 return {"trade_id": trade_id, "action": "TP1", "price": tp1}
 
-        # ── TP2 ───────────────────────────────────────────────────────────────
+        # ── Trailing SL after TP1 (Version D: 2×ATR trail) ───────────────────
+        # After TP1 hit, we trail the SL at 2×ATR behind the current price peak.
+        # This replaces the fixed TP2 — lets winners run as BTC can move 5-10R+.
+        if tp1_hit:
+            current_atr = self._get_current_atr()
+            if current_atr > 0:
+                trail_dist = TRAIL_ATR_MULT * current_atr
+                if is_long:
+                    trail_sl = round(current_price - trail_dist, 2)
+                    if trail_sl > sl:   # only move SL up, never down
+                        self._journal.update_stop_loss(trade_id, trail_sl)
+                        sl = trail_sl
+                        logger.debug("BTC %s: trail SL → %.2f (price=%.2f ATR=%.2f)",
+                                     trade_id[:8], trail_sl, current_price, current_atr)
+                else:
+                    trail_sl = round(current_price + trail_dist, 2)
+                    if trail_sl < sl:   # only move SL down, never up
+                        self._journal.update_stop_loss(trade_id, trail_sl)
+                        sl = trail_sl
+                        logger.debug("BTC %s: trail SL → %.2f (price=%.2f ATR=%.2f)",
+                                     trade_id[:8], trail_sl, current_price, current_atr)
+
+        # ── TP2 (fixed fallback if trail SL isn't active) ─────────────────────
         if tp2 > 0 and tp1_hit:
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
-                pnl = self._calc_pnl(entry, tp2, direction, lot_size, sl)
+                pnl = self._calc_pnl(entry, tp2, direction, lot_size, original_sl)
                 self._journal.close_trade(
                     trade_id, tp2, "TP2",
                     pnl_usd=pnl[0], rr_achieved=pnl[1],
@@ -220,6 +249,25 @@ class PaperTrader:
         return None
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _get_current_atr(self) -> float:
+        """Fetch current H1 ATR(14) for BTC. Returns 0 on failure."""
+        try:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                df = ex.submit(self._feed.get_ohlcv, SYMBOL, "H1", 30).result(timeout=5)
+            if df.empty or len(df) < 5:
+                return 0.0
+            h = df["high"].astype(float)
+            l = df["low"].astype(float)
+            c = df["close"].astype(float)
+            tr = pd.concat([
+                h - l,
+                (h - c.shift(1)).abs(),
+                (l - c.shift(1)).abs(),
+            ], axis=1).max(axis=1)
+            return float(tr.rolling(ADX_PERIOD).mean().iloc[-1])
+        except Exception:
+            return 0.0
 
     def _calc_pnl(
         self,

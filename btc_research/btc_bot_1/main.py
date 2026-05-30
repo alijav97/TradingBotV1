@@ -167,7 +167,9 @@ def main() -> None:
             f"Paper trading: ACTIVE\n"
             f"Instrument: BTCUSD\n"
             f"Kill-zone: 21:00-24:00 UTC (01:00-04:00 UAE)\n"
-            f"Strategy: BTC Confluence V1\n"
+            f"Strategy: Version D (EMA200 + Flipped Risk)\n"
+            f"Risk: 3% ADX 20-28 | 2% ADX >28 | skip ADX <20\n"
+            f"Trailing SL: 2xATR after TP1\n"
             f"Scan: every 2s inside kill-zone | every 5min outside"
         )
     except Exception:
