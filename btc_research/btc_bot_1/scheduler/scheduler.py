@@ -133,6 +133,11 @@ class BTCScheduler:
         _now = datetime.now(timezone.utc)
         if KZ_START_UTC <= _now.hour < KZ_END_UTC:
             return   # kill-zone job covers this window
+        hours_to_kz = (KZ_START_UTC - _now.hour) % 24
+        logger.info(
+            "BTC background scan — UTC %02d:%02d | kill-zone in ~%dh (%d:00 UTC)",
+            _now.hour, _now.minute, hours_to_kz, KZ_START_UTC,
+        )
         self._run_scan()
 
     def _job_scan_killzone(self) -> None:
