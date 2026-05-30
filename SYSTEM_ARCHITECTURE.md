@@ -6,6 +6,112 @@ Active branch: claude/xauusd-strategy-backtest-sO2vM
 
 ---
 
+## DIRECTORY → FUNCTION MAP
+
+Every folder in the repo and on the VPS, what it does, and whether it matters for live trading.
+
+### ROOT LEVEL
+| Folder / File | Function | Live? |
+|---------------|----------|-------|
+| `v2/` | WTI live bot — entire production trading system | ✅ YES |
+| `btc_research/` | BTC research + BTC Bot 1 + BTC Bot 2 | ✅ YES |
+| `v2/deploy/` | VPS setup scripts — run once to provision the server | Setup only |
+| `requirements.txt` | All Python packages needed across the whole project | ✅ YES |
+| `SYSTEM_ARCHITECTURE.md` | This file — operations journal | Reference |
+| `setup_vps.ps1` | Windows VPS auto-setup (Chocolatey + Python + venv + clone) | Setup only |
+| `.env` | All credentials — gitignored, never committed | ✅ YES |
+| `.gitignore` | Excludes .env, *.db, *.log, __pycache__ from git | Config |
+| `venv/` `.venv/` | Local dev virtual environments — NOT used on VPS | Dev only |
+| `data/` `outputs/` `resources/` | Research data, analysis outputs | Research only |
+| `scripts/` | Utility/helper scripts | Dev only |
+| `analysis_*.py` `backtest.py` etc. | Root-level research scripts — not run by any bot | Research only |
+
+---
+
+### v2/ — WTI BOT FOLDERS
+| Folder | Function | Key files |
+|--------|----------|-----------|
+| `v2/` | Package root — `main.py` is the entry point | `main.py`, `settings.py`, `instrument_config.py` |
+| `v2/signals/` | Signal generation — where "should I trade?" is decided | `confluence_engine.py`, `signal_ranker.py`, `entry_checklist.py` |
+| `v2/signals/strategies/` | Individual strategy implementations — one file per strategy | `ny_momentum_wti.py` ← ACTIVE, others inactive |
+| `v2/connectors/` | Market data connections — feeds price data into the bot | `mt5_connector.py`, `binance_connector.py`, `unified_data.py` |
+| `v2/scheduler/` | Timing engine — decides WHEN each job runs | `scheduler.py` — 5min H1 scan + 60s monitor |
+| `v2/journal/` | Trade logging — records every trade to SQLite | `sqlite_journal.py` → `data/trades.db` |
+| `v2/trading/` | Trade execution — opens, manages, closes paper trades | `paper_trader.py`, `trade_monitor.py` |
+| `v2/risk/` | Risk management — lot sizing, heat checks, loss limits | `position_sizer.py`, `atr_sl_engine.py`, `portfolio_heat.py`, `loss_limits.py`, `trade_manager.py` |
+| `v2/api/` | External interfaces — Telegram alerts + REST API | `telegram_bot.py`, `api_server.py`, `api_keys.py` |
+| `v2/analysis/` | Technical analysis helpers used by strategies | `indicators.py`, `candle_patterns.py`, `sr_mapper.py`, `mtf_analyzer.py`, `session_profiler.py`, `smart_money.py`, `liquidity_map.py`, `world_sessions.py` |
+| `v2/intelligence/` | Market context — news, COT, DXY, geopolitical filters | `news_monitor.py`, `news_filter.py`, `cot_analyzer.py`, `dxy_correlation.py`, `geo_filter.py`, `tweet_monitor.py` |
+| `v2/ml/` | Machine learning — regime detection, signal boosting | `ml_engine.py`, `hmm_regime.py`, `lightgbm_trainer.py`, `feature_engineer.py` |
+| `v2/backtest/` | Backtesting engine — test strategies on historical data | `backtester.py`, `run_backtest.py` |
+| `v2/tests/` | Unit tests | Test files |
+| `v2/deploy/` | VPS deployment scripts | `windows_setup.ps1`, `install_service.ps1` |
+| `v2/data/` | Runtime data on VPS — trades DB + logs + ML models | `trades.db`, `logs/`, `models/` |
+
+---
+
+### btc_research/ — BTC FOLDERS
+| Folder | Function | Key files |
+|--------|----------|-----------|
+| `btc_research/` | Package root — shared settings for all BTC work | `settings.py`, `__init__.py` |
+| `btc_research/strategy/` | Shared BTC confluence scorer — used by Bot 1's signal engine | `confluence.py` — MR breakout + inter-market scoring |
+| `btc_research/factors/` | Individual scoring factors used by confluence.py | `btc_momentum.py`, `gold_factor.py`, `nasdaq_factor.py`, `time_factor.py` |
+| `btc_research/strategies/` | BTC strategy implementations (backtest + live use) | `swing_level.py`, `swing_level_v2.py`, `volatility_breakout.py`, `ema_trend.py`, etc. |
+| `btc_research/backtest/` | BTC backtesting engine — run research, not live | `engine.py`, `report.py`, `optimizer.py`, `session_scanner.py` |
+| `btc_research/data/` | BTC research data cache | OHLCV cache files |
+| `btc_research/analysis_*.py` | Research/analysis scripts — run manually, never by bots | Various analysis files |
+| `btc_research/run_backtest.py` | Runs BTC Bot 1 backtest manually | Research script |
+| `btc_research/run_backtest_btc2.py` | Runs BTC Bot 2 backtest manually | Research script |
+
+---
+
+### btc_research/btc_bot_1/ — BTC BOT 1 FOLDERS
+| Folder | Function | Key files |
+|--------|----------|-----------|
+| `btc_bot_1/` | Package root — entry point | `main.py`, `settings.py` |
+| `btc_bot_1/connectors/` | Standalone MT5 connection for Bot 1 — subtracts UTC+3 offset | `mt5_connector.py`, `unified_data.py` |
+| `btc_bot_1/signals/` | Signal engine — EMA200 + ADX + MR breakout + confluence | `btc_engine.py` |
+| `btc_bot_1/trading/` | Paper trader — opens/monitors/closes trades | `paper_trader.py` |
+| `btc_bot_1/journal/` | SQLite trade journal | `sqlite_journal.py` → `data/btc_trades.db` |
+| `btc_bot_1/scheduler/` | APScheduler jobs — 2s KZ scan + 5min BG + heartbeats | `scheduler.py` |
+| `btc_bot_1/api/` | Telegram alerts | `telegram_bot.py` |
+| `btc_bot_1/data/` | Runtime data on VPS — trades DB + logs | `btc_trades.db`, `logs/btc_bot.log` |
+
+---
+
+### btc_research/btc_bot_2/ — BTC BOT 2 FOLDERS
+| Folder | Function | Key files |
+|--------|----------|-----------|
+| `btc_bot_2/` | Package root — entry point | `main.py`, `settings.py` |
+| `btc_bot_2/connectors/` | Standalone MT5 connection for Bot 2 — same UTC+3 correction | `mt5_connector.py`, `unified_data.py` |
+| `btc_bot_2/strategy/` | VB + SwingBreak v2 combined strategy logic | `vb_swing_combined.py` |
+| `btc_bot_2/journal/` | Standalone SQLite trade journal | `sqlite_journal.py` → `data/btc2_trades.db` |
+| `btc_bot_2/data/` | Runtime data on VPS — trades DB + logs | `btc2_trades.db`, `logs/btc_bot_2.log` |
+| Key files at `btc_bot_2/` root: | | |
+| `signal_engine.py` | Signal engine — EMA200 + ADX + VBSwing strategy | Bot 2 signal logic |
+| `paper_trader.py` | Paper trader — opens/monitors/closes trades | Trade management |
+| `scheduler.py` | APScheduler jobs — 2s KZ + 5min BG + 2s post-KZ + 60s monitor + heartbeats | Timing |
+| `telegram.py` | Telegram alerts | Uses BTC2_TELEGRAM_BOT_TOKEN |
+| `api.py` | FastAPI endpoints on port 8002 | Health + trades + performance |
+
+---
+
+### VPS FOLDERS (not in git)
+| Folder | Function |
+|--------|----------|
+| `C:\TradingBotV2\` | WTI bot installation root |
+| `C:\TradingBotV2\v2\` | WTI bot source code |
+| `C:\TradingBotV2\venv\` | Python virtual environment — all packages live here |
+| `C:\TradingBotV2\venv\Scripts\python.exe` | THE Python executable to use for ALL bots |
+| `C:\TradingBotV2\venv\Scripts\pip.exe` | THE pip to use for installing packages |
+| `C:\TradingBotV2\data\` | WTI bot runtime data (trades.db, logs) |
+| `C:\TradingBotV2\.env` | Master credentials file — WTI + BTC + BTC2 |
+| `C:\Temp\TradingBotV1\` | Git clone of the full repo — BTC bots run from here |
+| `C:\Temp\TradingBotV1\btc_research\` | BTC bot source code |
+| `C:\Temp\TradingBotV1\.env` | Secondary credentials file — must match TradingBotV2\.env |
+
+---
+
 ## GOLDEN RULES (never break these)
 
 1. `btc_research/` = BTC work ONLY. Never import from `v2/` inside here.
