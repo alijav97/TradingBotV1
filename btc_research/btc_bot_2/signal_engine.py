@@ -43,8 +43,8 @@ from btc_research.btc_bot_2.strategy.vb_swing_combined import VBSwingStrategy, g
 
 logger = logging.getLogger(__name__)
 
-# Binance symbol name for BTCUSDT data feed
-_BTC_SYMBOL = "BTCUSDT"
+# MT5 symbol — uses Pepperstone BTCUSD (same MT5 connection as Bot 1)
+_BTC_SYMBOL = "BTCUSD"
 _TIMEFRAME  = "H1"
 _BAR_COUNT  = 300
 

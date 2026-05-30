@@ -88,6 +88,21 @@ INSTRUMENTS: dict[str, InstrumentConfig] = {
         description     = "Nasdaq 100 — NY session only",
     ),
 
+    "BTCUSD": InstrumentConfig(
+        symbol          = "BTCUSD",
+        source          = "mt5",
+        mt5_symbol      = "BTCUSD",   # Pepperstone MT5 symbol
+        binance_symbol  = "",
+        pip_value_usd   = 1.0,        # $1 per $1 move on 1 BTC
+        pip_size        = 1.0,        # 1 pip = $1 on BTC
+        min_lot         = 0.001,      # 0.001 BTC minimum
+        lot_step        = 0.001,
+        max_leverage    = 3,
+        sessions        = ["24/7"],
+        correlated_with = ["ETHUSD", "TOTAL_CRYPTO"],
+        description     = "Bitcoin / USD via MT5 (Pepperstone)",
+    ),
+
     "BTCUSDT": InstrumentConfig(
         symbol          = "BTCUSDT",
         source          = "binance",

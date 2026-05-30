@@ -3,9 +3,26 @@ btc_research/btc_bot_2/telegram.py — Telegram alert wrapper for BTC Bot 2.
 
 Thin wrapper around v2's TelegramAlerter that:
   - Prefixes all messages with "[BTC BOT 2]" so alerts are distinct from Bot 1
-  - Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from environment (same as Bot 1)
-    but uses BTC2_TELEGRAM_CHAT_ID if set (allows separate channel for Bot 2)
+  - Supports a COMPLETELY SEPARATE Telegram bot for Bot 2 via BTC2_TELEGRAM_BOT_TOKEN
+  - Falls back to the shared TELEGRAM_BOT_TOKEN if BTC2_TELEGRAM_BOT_TOKEN is not set
+  - Uses BTC2_TELEGRAM_CHAT_ID for the chat (falls back to TELEGRAM_CHAT_ID)
   - Adds BTC2-specific message formats (ADX, entry_type, risk %)
+
+== ENVIRONMENT VARIABLES ==
+
+  BTC2_TELEGRAM_BOT_TOKEN   — Bot token for BTC Bot 2's OWN Telegram bot (preferred)
+                               Get this from @BotFather after creating a new bot.
+  TELEGRAM_BOT_TOKEN        — Fallback shared bot token (same as Bot 1)
+  BTC2_TELEGRAM_CHAT_ID     — Chat/channel ID for Bot 2 alerts (preferred)
+  TELEGRAM_CHAT_ID          — Fallback shared chat ID (same as Bot 1)
+
+  Recommended setup (fully independent):
+    BTC2_TELEGRAM_BOT_TOKEN=<your new BTC Bot 2 token from BotFather>
+    BTC2_TELEGRAM_CHAT_ID=<your BTC Bot 2 chat or channel ID>
+
+  Minimal setup (share Bot 1's bot, separate channel):
+    BTC2_TELEGRAM_CHAT_ID=<your BTC Bot 2 chat or channel ID>
+    (TELEGRAM_BOT_TOKEN already set from Bot 1)
 
 Usage:
     from btc_research.btc_bot_2.telegram import BTC2Alerter
@@ -35,9 +52,15 @@ class BTC2Alerter:
     """
     Telegram alerter for BTC Bot 2.
 
-    Reads tokens from environment:
-      TELEGRAM_BOT_TOKEN     — shared with Bot 1 (or set separately)
-      BTC2_TELEGRAM_CHAT_ID  — Bot 2 Telegram channel (falls back to TELEGRAM_CHAT_ID)
+    Token resolution order (first non-empty wins):
+      1. token arg passed to __init__
+      2. BTC2_TELEGRAM_BOT_TOKEN env var  ← Bot 2's own dedicated bot
+      3. TELEGRAM_BOT_TOKEN env var       ← shared fallback (Bot 1's bot)
+
+    Chat ID resolution order:
+      1. chat_id arg passed to __init__
+      2. BTC2_TELEGRAM_CHAT_ID env var    ← Bot 2's dedicated channel/chat
+      3. TELEGRAM_CHAT_ID env var         ← shared fallback
     """
 
     def __init__(
@@ -45,7 +68,11 @@ class BTC2Alerter:
         token:   str | None = None,
         chat_id: str | None = None,
     ) -> None:
-        self._token   = token   or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        self._token = (
+            token
+            or os.environ.get("BTC2_TELEGRAM_BOT_TOKEN", "")
+            or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        )
         self._chat_id = (
             chat_id
             or os.environ.get("BTC2_TELEGRAM_CHAT_ID", "")
@@ -53,9 +80,21 @@ class BTC2Alerter:
         )
 
         if not self._token:
-            logger.info("BTC2Alerter: TELEGRAM_BOT_TOKEN not set — alerts disabled")
+            logger.info(
+                "BTC2Alerter: no token set (BTC2_TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_TOKEN) "
+                "— alerts disabled"
+            )
         else:
-            logger.info("BTC2Alerter ready (chat_id=%s)", self._chat_id or "(not set)")
+            # Show which token source is active for easy debugging
+            src = (
+                "BTC2_TELEGRAM_BOT_TOKEN" if os.environ.get("BTC2_TELEGRAM_BOT_TOKEN")
+                else ("__init__ arg" if token else "TELEGRAM_BOT_TOKEN")
+            )
+            logger.info(
+                "BTC2Alerter ready — token src: %s  |  chat_id: %s",
+                src,
+                self._chat_id or "(not set)",
+            )
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

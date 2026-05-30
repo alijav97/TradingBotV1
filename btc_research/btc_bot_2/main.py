@@ -18,15 +18,23 @@ Wires all BTC Bot 2 subsystems together:
 
 == Config ==
   Environment variables (in .env or shell):
-    TELEGRAM_BOT_TOKEN       — shared with Bot 1
-    BTC2_TELEGRAM_CHAT_ID    — Bot 2 Telegram channel (or use TELEGRAM_CHAT_ID)
+
+  Telegram (Bot 2's OWN bot — recommended):
+    BTC2_TELEGRAM_BOT_TOKEN  — token from BotFather for BTC Bot 2's dedicated bot
+    BTC2_TELEGRAM_CHAT_ID    — chat/channel ID for Bot 2 alerts
+  Telegram (shared fallback — uses Bot 1's bot):
+    TELEGRAM_BOT_TOKEN       — shared bot token (Bot 1 fallback)
+    TELEGRAM_CHAT_ID         — shared chat ID (Bot 1 fallback)
+
+  API:
     BTC2_API_KEY             — read-only API key for /health /trades /performance
     BTC2_API_KEY_FULL        — full API key for POST /scan
     BTC2_API_PORT            — API port (default 8002)
-    BINANCE_API_KEY          — Binance API key (for live price data)
-    BINANCE_API_SECRET       — Binance API secret
-    BINANCE_TESTNET          — "true" for testnet (default true)
-    MT5_LOGIN, MT5_PASSWORD, MT5_SERVER — optional (not needed for BTC)
+
+  Data (MT5 — same connection as Bot 1, no Binance needed):
+    MT5_LOGIN    — Pepperstone MT5 account number
+    MT5_PASSWORD — Pepperstone MT5 password
+    MT5_SERVER   — Pepperstone MT5 server name
 """
 from __future__ import annotations
 
@@ -114,31 +122,40 @@ def _start_api_server(port: int) -> threading.Thread:
 def main() -> None:
     """Wire all Bot 2 subsystems and keep the process running."""
 
+    # Determine which Telegram token/chat will be used (for log clarity)
+    _tg_token_src = (
+        "BTC2_TELEGRAM_BOT_TOKEN" if os.environ.get("BTC2_TELEGRAM_BOT_TOKEN")
+        else ("TELEGRAM_BOT_TOKEN" if os.environ.get("TELEGRAM_BOT_TOKEN") else "(none)")
+    )
+    _tg_chat_src = (
+        "BTC2_TELEGRAM_CHAT_ID" if os.environ.get("BTC2_TELEGRAM_CHAT_ID")
+        else ("TELEGRAM_CHAT_ID" if os.environ.get("TELEGRAM_CHAT_ID") else "(none)")
+    )
+
     logger.info("=" * 60)
     logger.info("BTC Bot 2 starting")
-    logger.info("Strategy : VB + Swing Level Break v2  [both 2×ATR]")
-    logger.info("KZ hours : 01:00, 02:00, 03:00, 08:00 UTC")
-    logger.info("API port : %d", API_PORT)
-    logger.info("DB       : %s", DB_PATH)
+    logger.info("Strategy  : VB + Swing Level Break v2  [both 2xATR]")
+    logger.info("KZ hours  : 01:00, 02:00, 03:00, 08:00 UTC")
+    logger.info("API port  : %d", API_PORT)
+    logger.info("DB        : %s", DB_PATH)
+    logger.info("Telegram  : token=%s  chat=%s", _tg_token_src, _tg_chat_src)
     logger.info("=" * 60)
 
     # ── 1. DataFeed (Binance for BTCUSDT) ─────────────────────────────────────
-    logger.info("Connecting DataFeed…")
+    # BTC data comes from MT5 (Pepperstone BTCUSD) — same connection as Bot 1
+    logger.info("Connecting DataFeed (MT5)…")
     feed = DataFeed()
     try:
         conn = feed.connect(
-            mt5_login          = int(os.environ.get("MT5_LOGIN", "0")),
-            mt5_password       = os.environ.get("MT5_PASSWORD", ""),
-            mt5_server         = os.environ.get("MT5_SERVER", ""),
-            binance_api_key    = os.environ.get("BINANCE_API_KEY", ""),
-            binance_api_secret = os.environ.get("BINANCE_API_SECRET", ""),
-            binance_testnet    = os.environ.get("BINANCE_TESTNET", "true").lower() == "true",
+            mt5_login    = int(os.environ.get("MT5_ACCOUNT", os.environ.get("MT5_LOGIN", "0"))),
+            mt5_password = os.environ.get("MT5_PASSWORD", ""),
+            mt5_server   = os.environ.get("MT5_SERVER", ""),
         )
-        logger.info(
-            "DataFeed: MT5=%s  Binance=%s",
-            conn.get("mt5"),
-            conn.get("binance"),
-        )
+        logger.info("DataFeed: MT5=%s", conn.get("mt5"))
+        if not conn.get("mt5"):
+            logger.warning(
+                "MT5 not connected — check MT5_ACCOUNT / MT5_PASSWORD / MT5_SERVER in .env"
+            )
     except Exception as exc:
         logger.warning("DataFeed connect error (partial ok): %s", exc)
 

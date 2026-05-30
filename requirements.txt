@@ -13,3 +13,7 @@ schedule
 beautifulsoup4
 feedparser
 anthropic
+# ── Bot 2 additions ────────────────────────────────────────────────────────────
+APScheduler==3.10.4
+fastapi
+uvicorn[standard]
