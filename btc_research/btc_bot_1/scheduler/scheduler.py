@@ -21,7 +21,7 @@ Same 3-job pattern as v2/scheduler/scheduler.py but with BTC kill-zone:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -61,6 +61,8 @@ class BTCScheduler:
         self._journal = journal
         self._feed    = feed
         self._alerter = TelegramAlerter()
+        self._kz_scan_count   = 0
+        self._last_kz_log     = datetime.min.replace(tzinfo=timezone.utc)  # heartbeat tracker
         self._scheduler = (
             BackgroundScheduler(
                 executors={"default": APSThreadPool(5)},
@@ -183,6 +185,36 @@ class BTCScheduler:
         in_kz = KZ_START_UTC <= _now.hour < 24   # 21,22,23 only
         if not in_kz:
             return
+
+        self._kz_scan_count += 1
+
+        # Heartbeat every 60 seconds so operator knows the bot is alive
+        if (_now - self._last_kz_log).total_seconds() >= 60:
+            self._last_kz_log = _now
+            # Get a quick status snapshot for the heartbeat line
+            try:
+                snap = self._engine.get_market_snapshot()
+                if snap:
+                    reason_long  = self._engine.scan("long").get("blocked_by", "—")
+                    reason_short = self._engine.scan("short").get("blocked_by", "—")
+                    logger.info(
+                        "KZ HEARTBEAT #%d | UTC %02d:%02d | BTC $%s | ADX %.1f | "
+                        "LONG: %s | SHORT: %s",
+                        self._kz_scan_count, _now.hour, _now.minute,
+                        f"{snap['price']:,.0f}", snap.get("adx", 0),
+                        reason_long, reason_short,
+                    )
+                else:
+                    logger.info(
+                        "KZ HEARTBEAT #%d | UTC %02d:%02d | no market data",
+                        self._kz_scan_count, _now.hour, _now.minute,
+                    )
+            except Exception as exc:
+                logger.info(
+                    "KZ HEARTBEAT #%d | UTC %02d:%02d | heartbeat error: %s",
+                    self._kz_scan_count, _now.hour, _now.minute, exc,
+                )
+
         self._run_scan()
 
     def _job_post_killzone_watch(self) -> None:
