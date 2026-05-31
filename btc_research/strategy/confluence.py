@@ -110,11 +110,12 @@ def score_bar(
     if bar_time.tzinfo is None:
         bar_time = bar_time.replace(tzinfo=timezone.utc)
 
-    # ── 1. Session gate ────────────────────────────────────────────────────────
+    # ── 1. Time factor (session bonus score — no kill-zone gate here) ─────────────
+    # NOTE: The kill-zone gate is handled by the caller (signal engine + scheduler).
+    # score_bar() is shared across strategies with DIFFERENT kill-zone hours
+    # (e.g. BTC Bot 1 uses 21-24 UTC, WTI uses 13-17 UTC).
+    # Gating here with the wrong settings would silently block valid signals.
     time_f = compute_time_factor(bar_time)
-    if not time_f["in_killzone"]:
-        result["blocked_by"] = f"outside kill-zone (UTC {bar_time.hour:02d}:xx)"
-        return result
 
     # ── 2. Morning range check ─────────────────────────────────────────────────
     mr = _morning_range(df_btc, bar_time)
