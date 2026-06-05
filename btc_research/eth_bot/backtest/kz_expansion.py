@@ -40,11 +40,18 @@ STARTING_BALANCE = 500.0
 # Current OK slots (already in the live bot — exclude from expansion candidates)
 CURRENT_SLOTS = {(2, "rsi_50"), (6, "macd_adx"), (10, "rsi_ema")}
 
-# Expansion quality thresholds (relaxed to find candidates)
+# Expansion quality thresholds
 MIN_N      = 12
-MIN_WR     = 0.40    # 40% — relaxed from 45% OK threshold
+MIN_WR     = 0.43    # 43% — slightly relaxed from 45% OK threshold
 MIN_AVG_R  = 0.25    # minimum AvgR
 MIN_PF     = 1.10    # profit factor ≥ 1.10
+
+# ── MaxDD safety cap ───────────────────────────────────────────────────────────
+# A candidate slot is REJECTED if adding it pushes MaxDD below this level.
+# -35% means: from the peak balance, the account never loses more than 35%.
+# This automatically filters out swing_break (WR=41.5%) and similar low-WR
+# high-frequency strategies that cause large losing streaks.
+MAX_DD_LIMIT = -35.0
 
 # Config D risk function (best from ADX sweep)
 def _risk_fn(adx: float) -> float:
@@ -194,8 +201,9 @@ def main() -> None:
     # Add top candidates progressively
     added_trades  = base_trades.copy()
     n_slots_added = 3
+    accepted_slots: list[tuple[int, str]] = []   # (hour, strat) pairs that passed DD check
 
-    for _, row in cands.head(8).iterrows():
+    for _, row in cands.head(20).iterrows():
         hour  = int(row["hour_utc"])
         strat = row["strategy"]
         label = row.get("strategy_label", strat)
@@ -208,16 +216,25 @@ def main() -> None:
         if new_t.empty:
             continue
 
-        added_trades  = pd.concat([added_trades, new_t]).sort_values("entry_time").reset_index(drop=True)
-        n_slots_added += 1
+        # ── MaxDD safety check — test before committing ──────────────────────
+        test_trades = pd.concat([added_trades, new_t]).sort_values("entry_time").reset_index(drop=True)
+        test_c      = _compound(test_trades)
+        slot_str    = f"+{strat}[{hour:02d}]"
+        if test_c["max_dd"] < MAX_DD_LIMIT:
+            print(f"  SKIP  {slot_str:<30}  MaxDD would be {test_c['max_dd']:+.1f}% "
+                  f"(limit {MAX_DD_LIMIT:+.0f}%)")
+            continue
 
-        c      = _compound(added_trades)
+        added_trades  = test_trades
+        n_slots_added += 1
+        accepted_slots.append((hour, strat))
+
+        c      = test_c
         n_yrs  = (added_trades["entry_time"].max() - added_trades["entry_time"].min()).days / 365.25
         mo_rate = len(added_trades) / (n_yrs * 12)
         proj_5 = STARTING_BALANCE * ((1 + c["cagr"] / 100) ** 5)
         flag   = "  ← $60k ✓" if proj_5 >= 60_000 else ""
 
-        slot_str = f"+{strat}[{hour:02d}]"
         print(f"  {n_slots_added:>5}  {slot_str:<30}  {len(added_trades):>4}  "
               f"{mo_rate:>5.1f}  {c['cagr']:>+6.1f}%  ${proj_5:>9,.0f}  "
               f"{c['max_dd']:>+6.1f}%{flag}")
@@ -228,24 +245,36 @@ def main() -> None:
     print("  RECOMMENDED EXPANSION — best slots to add (in priority order)")
     print(_bar())
 
-    added_t2  = base_trades.copy()
+    added_t2    = base_trades.copy()
     added_slots = [("H02", "rsi_50"), ("H06", "macd_adx"), ("H10", "rsi_ema")]
     target_hit  = False
 
-    for _, row in cands.head(8).iterrows():
-        hour  = int(row["hour_utc"])
-        strat = row["strategy"]
-        label = row.get("strategy_label", strat)
+    for _, row in cands.head(20).iterrows():
+        hour    = int(row["hour_utc"])
+        strat   = row["strategy"]
+        label   = row.get("strategy_label", strat)
         session = _SESSION.get(hour, "")
 
-        new_t  = trades[(trades["strategy"] == strat) & (trades["hour_utc"] == hour)]
-        added_t2 = pd.concat([added_t2, new_t]).sort_values("entry_time").reset_index(drop=True)
+        new_t = trades[(trades["strategy"] == strat) & (trades["hour_utc"] == hour)]
+        if new_t.empty:
+            continue
+
+        # ── MaxDD safety check ────────────────────────────────────────────────
+        test_t2 = pd.concat([added_t2, new_t]).sort_values("entry_time").reset_index(drop=True)
+        c       = _compound(test_t2)
+        proj_5  = STARTING_BALANCE * ((1 + c["cagr"] / 100) ** 5)
+
+        if c["max_dd"] < MAX_DD_LIMIT:
+            print(f"  SKIP: {strat:<20} at UTC {hour:02d}:xx ({session})")
+            print(f"       MaxDD would be {c['max_dd']:+.1f}% — exceeds limit "
+                  f"({MAX_DD_LIMIT:+.0f}%) → rejected")
+            print()
+            continue
+
+        added_t2 = test_t2
         added_slots.append((f"H{hour:02d}", strat))
 
-        c      = _compound(added_t2)
-        proj_5 = STARTING_BALANCE * ((1 + c["cagr"] / 100) ** 5)
-
-        print(f"  Add: {strat:<20} at UTC {hour:02d}:xx ({session})")
+        print(f"  ADD:  {strat:<20} at UTC {hour:02d}:xx ({session})")
         print(f"       N_new={len(new_t):<4}  WR={row['win_rate']*100:.1f}%  "
               f"AvgR={row['avg_r']:+.3f}  PF={row['profit_factor']:.2f}")
         print(f"       After adding → CAGR={c['cagr']:+.1f}%  "
@@ -265,11 +294,11 @@ def main() -> None:
     print()
     print("  RECOMMENDED SETTINGS UPDATE")
     print(_bar())
-    top_hours = sorted(set(
-        [h for h, _ in CURRENT_SLOTS] +
-        [int(row["hour_utc"]) for _, row in cands.head(5).iterrows()]
-    ))
+    current_hours = [h for h, _ in CURRENT_SLOTS]
+    expansion_hours = [h for h, _ in accepted_slots]
+    top_hours = sorted(set(current_hours + expansion_hours))
     print(f"  KZ_HOURS = {top_hours}")
+    print(f"  (Only slots that kept MaxDD ≥ {MAX_DD_LIMIT:+.0f}% were included)")
     print(f"  Risk    : ADX≤25→2%  |  ADX 25-40→3%  |  ADX≥40→5%  (Config D)")
     print(f"  rsi_ema : ADX≥25 filter (drop the weak ADX 20-25 trades)")
     print(_bar("═"))
