@@ -45,7 +45,7 @@ from btc_research.eth_bot.settings import (
     TP1_RR, TP2_RR,
     ADX_SPLIT_EARLY_MAX, ADX_SPLIT_STRONG_MIN,
     RISK_PCT_EARLY_TREND, RISK_PCT_TRANSITION, RISK_PCT_STRONG,
-    KZ_HOURS,
+    KZ_HOURS, RSI_EMA_ADX_MIN,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,10 +71,10 @@ _PATH_C_HOURS = frozenset({10})    # RSI+EMA Stack
 
 def get_risk_pct(adx: float) -> float:
     """
-    ADX-split risk sizing.
-      ADX ≤ 25  → 3%  (early trend)
-      ADX 25-40 → 2%  (transition / dead zone)
-      ADX ≥ 40  → 4%  (strong trend, high conviction)
+    ADX-split risk sizing — Config D, confirmed best by 6yr ETH ADX sweep.
+      ADX ≤ 25  → 2%  (early/weak trend zone — WR 45%, AvgR +0.34 → bet light)
+      ADX 25-40 → 3%  (sweet spot — WR 47-60%, AvgR +0.87 to +1.64 → normal)
+      ADX ≥ 40  → 5%  (strong trend — WR 60%, high conviction → bet heavy)
     """
     if adx >= ADX_SPLIT_STRONG_MIN:
         return RISK_PCT_STRONG
@@ -357,8 +357,21 @@ class ETHStrategy(BTCStrategy):
         LONG : RSI crosses above 50 + EMA9 > EMA21 + close > EMA200
         SHORT: RSI crosses below 50 + EMA9 < EMA21 + close < EMA200
         SL   : entry ± 1.5×ATR
+
+        ADX gate: ADX ≥ RSI_EMA_ADX_MIN (default 25).
+        ADX 20-25 bucket for rsi_ema is near-worthless: WR=41.7%, AvgR=+0.070.
+        Raising the bar to 25 lifts quality to WR≥57%, AvgR≥1.40.
         """
         try:
+            # Per-strategy ADX gate (stricter than the global ADX_THRESHOLD=20)
+            adx_now = _calc_adx(df)
+            if adx_now < RSI_EMA_ADX_MIN:
+                base["reason"] = (
+                    f"rsi_ema ADX {adx_now:.1f} < {RSI_EMA_ADX_MIN} "
+                    f"(path C requires ADX≥{RSI_EMA_ADX_MIN})"
+                )
+                return base
+
             if len(df) < 3:
                 base["reason"] = "insufficient bars for RSI+EMA"
                 return base

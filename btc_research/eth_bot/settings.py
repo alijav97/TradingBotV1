@@ -69,14 +69,24 @@ else:
 # Same ADX-split logic as BTC Bot 2 — validated on crypto in general.
 # Revisit after ETH-specific backtest.
 STARTING_BALANCE      = 500.0   # USD paper trading account
-RISK_PCT_EARLY_TREND  = 0.03    # 3% — ADX ≤ 25 (early trend, lower conviction)
-RISK_PCT_TRANSITION   = 0.02    # 2% — ADX 25-40 (transition / dead zone)
-RISK_PCT_STRONG       = 0.04    # 4% — ADX ≥ 40 (strong trend + double confluence = high conviction)
-                                 # 4% on $500 = $20 at risk per trade in the strong zone
+# ADX-split risk — Config D, confirmed optimal by 6yr ETH ADX sweep:
+#   ADX 20-25: weak zone (WR=45%, AvgR=+0.34) → risk LESS
+#   ADX 25-40: sweet spot  (WR=47-60%, AvgR=+0.87-1.64) → normal risk
+#   ADX ≥ 40:  strong trend (WR=60%, AvgR=+0.62) → risk MORE
+# Config D outperformed all alternatives: CAGR +37.9% vs BTC-style +28.7%
+RISK_PCT_EARLY_TREND  = 0.02    # 2% — ADX ≤ 25 (early trend, weakest quality zone)
+RISK_PCT_TRANSITION   = 0.03    # 3% — ADX 25-40 (sweet spot — best WR/AvgR bucket)
+RISK_PCT_STRONG       = 0.05    # 5% — ADX ≥ 40 (strong trend, high conviction)
+                                 # 5% on $500 = $25 at risk, scales up with balance
 
-ADX_SPLIT_EARLY_MAX   = 25      # ADX ≤ 25  → early trend → 3% risk
-ADX_SPLIT_STRONG_MIN  = 40      # ADX ≥ 40  → strong trend → 3% risk
-                                 # ADX 25-40 → transition  → 2% risk
+ADX_SPLIT_EARLY_MAX   = 25      # ADX ≤ 25  → early trend  → 2% risk (weakest bucket)
+ADX_SPLIT_STRONG_MIN  = 40      # ADX ≥ 40  → strong trend → 5% risk (high conviction)
+                                 # ADX 25-40 → sweet spot   → 3% risk (best WR/AvgR)
+
+# Per-strategy ADX minimum (overrides global ADX_THRESHOLD for specific strategies):
+# rsi_ema at H10 collapses at ADX 20-25 (WR=41.7%, AvgR=+0.070, PF=1.12 — near random).
+# Applying ADX≥25 for that path removes 12 junk trades and lifts its quality to WR≥57%.
+RSI_EMA_ADX_MIN       = 25      # used by Path C (rsi_ema, hour 10) in eth_combined.py
 
 # ── TP / SL ratios ─────────────────────────────────────────────────────────────
 TP1_RR          = 2.0    # TP1 at 2R — partial close (50%), SL to breakeven
