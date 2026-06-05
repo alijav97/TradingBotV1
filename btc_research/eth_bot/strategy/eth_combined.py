@@ -1,44 +1,39 @@
 """
 btc_research/eth_bot/strategy/eth_combined.py — ETH Bot multi-confluence strategy.
 
-Derived from 6-year ETH backtest results (23 strategies, 43,955 signals).
+Confirmed by 6-year ETH backtest phase-2 (25 strategies, BTC-aligned filter):
 
-== STRATEGY DESIGN ==
+  PATH A — 02 UTC  (Asia Night):    RSI(14) 50-cross
+    WR=50.0%  AvgR=+0.786  PF=2.57  N=46
 
-  PRIMARY PATH — hours 14, 15, 16 UTC (London Close / NY session):
-    Swing Break[20] AND Keltner Channel[EMA20 ± 2×ATR14] — BOTH must agree.
+  PATH B — 06 UTC  (EU Pre-Open):   MACD cross + ADX ≥ 25 + MACD line side confirms
+    WR=45.0%  AvgR=+0.660  PF=2.65  N=20
 
-    Rationale from backtest:
-      - Keltner Channel at 15:00 UTC alone: WR=53.7%, AvgR=+0.508, N=82
-      - Keltner Channel at 14:00 UTC alone: WR=48.3%, AvgR=+0.498, N=87
-      - Swing Break at 14-16 UTC: highest volume (N=400-455), consistent edge
-      - Requiring BOTH filters removes most false breakouts →
-        expected combined WR 55-65% (vs. 38-53% individually)
+  PATH C — 10 UTC  (EU Mid-Session): RSI(14) 50-cross + EMA9/21 stack + EMA200
+    WR=48.1%  AvgR=+0.706  PF=2.36  N=27
 
-  SECONDARY PATH — hour 02 UTC (Asia Night):
-    RSI(14) 50-cross in the EMA200 direction.
+  All three paths require BTC to be on the same side of its EMA200 (BTC alignment).
+  The signal engine enforces BTC alignment before calling generate_signal().
 
-    Rationale from backtest:
-      - RSI 50-Cross at 02:00 UTC alone: WR=50.9%, AvgR=+0.754, PF=2.54, N=55
-      - Already above the 50% target on its own
+  KZ_HOURS = [2, 6, 10] — set in settings.py.
+
+== RISK SIZING ==
+  ADX ≤ 25  → 3%  ($15 on $500)
+  ADX 25-40 → 2%  ($10 on $500)
+  ADX ≥ 40  → 4%  ($20 on $500)
+
+== TP / SL ==
+  TP1 = 2R  (close 50%, SL to breakeven)
+  TP2 = 4R  (close remainder)
+  Trailing SL = price ± 2×ATR after TP1
 
 == PARAMETERS ==
-  _SWING_LOOKBACK  = 20 bars   — recent structure high / low
-  _KELT_EMA_PERIOD = 20 bars   — Keltner middle band (EMA)
-  _KELT_ATR_MULT   = 2.0       — Keltner band width (× ATR14)
-  _ATR_PERIOD      = 14 bars   — ATR for Keltner + SL padding
-  _RSI_PERIOD      = 14 bars   — RSI for 50-cross path
-  _SL_PADDING_ATR  = 0.25      — buffer beyond swing level for SL
-
-== NOTE ON BTC ALIGNMENT ==
-  Backtest showed BTC direction filter adds only +0.5% WR globally.
-  Not implemented in live bot (would require a second DataFeed call inside
-  generate_signal — complexity not justified by the marginal gain).
-
-== INTERFACE ==
-  ETHStrategy.generate_signal(df_window, bar_time, direction) → dict
-  Signal engine already handles: EMA200 direction filter, ADX ≥ 20 gate,
-  kill-zone gating, risk sizing, TP price calculation.
+  _RSI_PERIOD      = 14
+  _MACD_FAST/SLOW  = 12/26,  signal = 9
+  _ADX_MIN_B       = 25   (MACD+ADX path: min ADX to trade)
+  _EMA9 / _EMA21   = 9 / 21 (RSI+EMA stack)
+  _ATR_PERIOD      = 14   (SL calculation)
+  _SL_ATR_MULT     = 1.5  (SL = entry ± 1.5×ATR when no clear swing level)
 """
 from __future__ import annotations
 
@@ -50,31 +45,36 @@ from btc_research.eth_bot.settings import (
     TP1_RR, TP2_RR,
     ADX_SPLIT_EARLY_MAX, ADX_SPLIT_STRONG_MIN,
     RISK_PCT_EARLY_TREND, RISK_PCT_TRANSITION, RISK_PCT_STRONG,
+    KZ_HOURS,
 )
 
 logger = logging.getLogger(__name__)
 
 # ── Strategy constants ─────────────────────────────────────────────────────────
-_SWING_LOOKBACK   = 20      # bars used for swing high / low
-_KELT_EMA_PERIOD  = 20      # Keltner middle band EMA period
-_KELT_ATR_MULT    = 2.0     # Keltner band width multiplier (× ATR)
-_ATR_PERIOD       = 14      # ATR period (Keltner bands + SL padding)
-_RSI_PERIOD       = 14      # RSI period for 50-cross path
-_SL_PADDING_ATR   = 0.25    # SL buffer = swing_level ± _SL_PADDING_ATR × ATR
+_RSI_PERIOD   = 14
+_MACD_FAST    = 12
+_MACD_SLOW    = 26
+_MACD_SIG     = 9
+_EMA9_PERIOD  = 9
+_EMA21_PERIOD = 21
+_ADX_MIN_B    = 25      # Path B: minimum ADX for MACD+ADX confluence
+_ATR_PERIOD   = 14
+_SL_ATR_MULT  = 1.5    # SL = entry ± _SL_ATR_MULT × ATR
 
-# Session routing — must stay in sync with settings.KZ_HOURS = [2, 14, 15, 16]
-_PRIMARY_HOURS   = frozenset({14, 15, 16})   # Swing + Keltner confluence
-_SECONDARY_HOURS = frozenset({2})            # RSI 50-cross
+# Session routing (must stay in sync with settings.KZ_HOURS = [2, 6, 10])
+_PATH_A_HOURS = frozenset({2})     # RSI 50-Cross
+_PATH_B_HOURS = frozenset({6})     # MACD+ADX
+_PATH_C_HOURS = frozenset({10})    # RSI+EMA Stack
 
 
 # ── Public helper ──────────────────────────────────────────────────────────────
 
 def get_risk_pct(adx: float) -> float:
     """
-    ADX-split risk sizing (shared with signal_engine).
+    ADX-split risk sizing.
       ADX ≤ 25  → 3%  (early trend)
       ADX 25-40 → 2%  (transition / dead zone)
-      ADX ≥ 40  → 3%  (strong trend)
+      ADX ≥ 40  → 4%  (strong trend, high conviction)
     """
     if adx >= ADX_SPLIT_STRONG_MIN:
         return RISK_PCT_STRONG
@@ -84,10 +84,9 @@ def get_risk_pct(adx: float) -> float:
         return RISK_PCT_TRANSITION
 
 
-# ── Indicator helpers (self-contained, no external dependencies) ───────────────
+# ── Indicator helpers ──────────────────────────────────────────────────────────
 
 def _calc_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """True Range → ATR(period) simple rolling mean."""
     h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
     tr = pd.concat([
         h - l,
@@ -97,22 +96,7 @@ def _calc_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.rolling(period).mean()
 
 
-def _calc_keltner(
-    df: pd.DataFrame,
-    ema_period: int = 20,
-    atr_period: int = 14,
-    mult: float = 2.0,
-) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """Return (upper, mid, lower) Keltner Channel Series."""
-    mid   = df["close"].astype(float).ewm(span=ema_period, adjust=False).mean()
-    atr_s = _calc_atr(df, atr_period)
-    upper = mid + mult * atr_s
-    lower = mid - mult * atr_s
-    return upper, mid, lower
-
-
 def _calc_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """Standard Wilder RSI on close."""
     delta = df["close"].astype(float).diff()
     gain  = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
     loss  = (-delta).clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
@@ -120,31 +104,60 @@ def _calc_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
+def _calc_macd(df: pd.DataFrame,
+               fast: int = 12, slow: int = 26,
+               signal: int = 9) -> tuple[pd.Series, pd.Series]:
+    """Return (macd_line, signal_line)."""
+    c     = df["close"].astype(float)
+    line  = c.ewm(span=fast, adjust=False).mean() - c.ewm(span=slow, adjust=False).mean()
+    sig   = line.ewm(span=signal, adjust=False).mean()
+    return line, sig
+
+
+def _calc_ema(df: pd.DataFrame, period: int) -> pd.Series:
+    return df["close"].astype(float).ewm(span=period, adjust=False).mean()
+
+
+def _calc_adx(df: pd.DataFrame, period: int = 14) -> float:
+    """Return ADX value for the last bar."""
+    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
+    sp  = 2 * period - 1
+    hd  = h.diff();  ld = l.diff()
+    tr  = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
+    pdm = hd.where((hd > 0) & (hd > -ld), 0.0)
+    mdm = (-ld).where((-ld > 0) & (-ld > hd), 0.0)
+    aw  = tr.ewm(span=sp, adjust=False).mean()
+    pw  = pdm.ewm(span=sp, adjust=False).mean()
+    mw  = mdm.ewm(span=sp, adjust=False).mean()
+    pdi = 100 * pw / (aw + 1e-12)
+    ndi = 100 * mw / (aw + 1e-12)
+    dx  = 100 * (pdi - ndi).abs() / (pdi + ndi + 1e-12)
+    return float(dx.ewm(span=sp, adjust=False).mean().fillna(0).iloc[-1])
+
+
 # ── Strategy class ─────────────────────────────────────────────────────────────
 
 class ETHStrategy(BTCStrategy):
     """
-    Multi-confluence ETH strategy derived from 6-year backtest evidence.
+    Three-path ETH strategy confirmed by 6-year backtest (BTC-aligned).
 
-    Hour routing:
-      14, 15, 16 UTC → _swing_keltner()   (Swing Break + Keltner Channel)
-      02 UTC         → _rsi50_cross()     (RSI 14 crosses above/below 50)
+      Path A [02 UTC]: RSI(14) crosses above/below 50
+      Path B [06 UTC]: MACD line/signal cross + ADX ≥ 25 + MACD line on correct side of zero
+      Path C [10 UTC]: RSI(14) 50-cross + EMA9/21 stack aligned + EMA200 direction
 
-    The signal_engine already:
-      • Gates by kill-zone hours (KZ_HOURS)
-      • Applies EMA200 direction filter (direction arg reflects this)
-      • Applies ADX ≥ 20 gate
-      • Handles risk sizing, TP price computation, and position sizing
+    Signal engine already gates by: kill-zone, EMA200 direction, ADX ≥ 20.
+    This class handles entry-pattern logic only.
     """
 
-    name        = "ETH: Swing+Keltner [14-16 UTC] | RSI50-Cross [02 UTC]"
+    name        = "ETH: RSI50-Cross[02] | MACD+ADX[06] | RSI+EMA[10]"
     description = (
-        "14-16 UTC: Swing Break[20] + Keltner[EMA20 ± 2×ATR14] (both required) | "
-        "02 UTC: RSI14 50-cross"
+        "02 UTC: RSI14 50-cross | "
+        "06 UTC: MACD cross + ADX≥25 | "
+        "10 UTC: RSI50-cross + EMA9/21 stack"
     )
 
     def __init__(self) -> None:
-        pass   # no sub-strategies to construct
+        pass
 
     def generate_signal(
         self,
@@ -153,15 +166,14 @@ class ETHStrategy(BTCStrategy):
         direction: str,
     ) -> dict:
         """
-        Evaluate entry conditions for the current bar.
+        Route to the correct sub-strategy based on UTC hour.
 
         Args:
-            df_window : Last ~300 ETHUSD H1 bars with columns open/high/low/close/volume
-            bar_time  : UTC timestamp of the last bar
+            df_window : Last ~300 ETHUSD H1 bars
+            bar_time  : UTC timestamp of the latest bar
             direction : "long" or "short" (EMA200-filtered by signal_engine)
 
-        Returns dict with keys:
-            signal, entry, sl, tp1_rr, tp2_rr, strategy_used, reason, entry_type
+        Returns dict: signal, entry, sl, tp1_rr, tp2_rr, strategy_used, reason, entry_type
         """
         base = {
             "signal":        False,
@@ -174,207 +186,77 @@ class ETHStrategy(BTCStrategy):
             "entry_type":    "",
         }
 
-        min_bars = _SWING_LOOKBACK + _ATR_PERIOD + 10
-        if len(df_window) < min_bars:
-            base["reason"] = f"insufficient bars ({len(df_window)} < {min_bars})"
+        if len(df_window) < 50:
+            base["reason"] = f"insufficient bars ({len(df_window)})"
             return base
 
         hour    = bar_time.hour
         is_long = direction == "long"
 
-        if hour in _PRIMARY_HOURS:
-            return self._swing_keltner(df_window, is_long, base)
-        elif hour in _SECONDARY_HOURS:
-            return self._rsi50_cross(df_window, is_long, base)
+        if hour in _PATH_A_HOURS:
+            return self._path_a_rsi50(df_window, is_long, base)
+        elif hour in _PATH_B_HOURS:
+            return self._path_b_macd_adx(df_window, is_long, base)
+        elif hour in _PATH_C_HOURS:
+            return self._path_c_rsi_ema(df_window, is_long, base)
         else:
             base["reason"] = (
                 f"UTC {hour:02d} not in strategy hours "
-                f"(primary={sorted(_PRIMARY_HOURS)}, secondary={sorted(_SECONDARY_HOURS)})"
+                f"(A={sorted(_PATH_A_HOURS)}, B={sorted(_PATH_B_HOURS)}, C={sorted(_PATH_C_HOURS)})"
             )
             return base
 
-    # ── Sub-strategies ─────────────────────────────────────────────────────────
+    # ── Path A — RSI(14) 50-cross [02 UTC] ────────────────────────────────────
 
-    def _swing_keltner(
-        self,
-        df: pd.DataFrame,
-        is_long: bool,
-        base: dict,
-    ) -> dict:
+    def _path_a_rsi50(self, df: pd.DataFrame, is_long: bool, base: dict) -> dict:
         """
-        PRIMARY PATH (14-16 UTC) — Swing Break + Keltner Channel.
-
-        LONG  entry: close > 20-bar swing_high  AND  close > kelt_upper
-        SHORT entry: close < 20-bar swing_low   AND  close < kelt_lower
-
-        SL placement:
-          Long:  swing_low  - 0.25 × ATR14   (below the swing structure)
-          Short: swing_high + 0.25 × ATR14   (above the swing structure)
+        Asia Night — RSI(14) 50-cross in EMA200 direction.
+        LONG : RSI was < 50, now ≥ 50
+        SHORT: RSI was > 50, now ≤ 50
+        SL   : 10-bar low/high ± 1.5×ATR
         """
         try:
-            close = df["close"].astype(float)
-            high  = df["high"].astype(float)
-            low   = df["low"].astype(float)
-
-            # Indicators computed on the full window
-            atr_s                       = _calc_atr(df, _ATR_PERIOD)
-            kelt_upper, _, kelt_lower   = _calc_keltner(
-                df, _KELT_EMA_PERIOD, _ATR_PERIOD, _KELT_ATR_MULT
-            )
-
-            curr_close  = float(close.iloc[-1])
-            curr_kelt_u = float(kelt_upper.iloc[-1])
-            curr_kelt_l = float(kelt_lower.iloc[-1])
-            curr_atr    = float(atr_s.iloc[-1])
-
-            if curr_atr <= 0 or pd.isna(curr_atr):
-                base["reason"] = "ATR unavailable"
-                return base
-
-            # Swing levels from the _SWING_LOOKBACK bars BEFORE the current bar
-            # (exclude current bar to avoid lookahead)
-            prior_hi = float(high.iloc[-_SWING_LOOKBACK - 1 : -1].max())
-            prior_lo = float(low.iloc[-_SWING_LOOKBACK - 1 : -1].min())
-
-            if is_long:
-                swing_ok   = curr_close > prior_hi
-                keltner_ok = curr_close > curr_kelt_u
-
-                if not swing_ok or not keltner_ok:
-                    fails = []
-                    if not swing_ok:
-                        fails.append(f"close {curr_close:.2f} ≤ swing_hi {prior_hi:.2f}")
-                    if not keltner_ok:
-                        fails.append(f"close {curr_close:.2f} ≤ kelt_upper {curr_kelt_u:.2f}")
-                    base["reason"] = "swing+keltner LONG miss: " + " | ".join(fails)
-                    return base
-
-                entry   = curr_close
-                sl      = round(prior_lo - _SL_PADDING_ATR * curr_atr, 2)
-                sl_dist = entry - sl
-
-                reason = (
-                    f"LONG: close {curr_close:.2f} > swing_hi {prior_hi:.2f}"
-                    f" + kelt_upper {curr_kelt_u:.2f}"
-                )
-
-            else:  # short
-                swing_ok   = curr_close < prior_lo
-                keltner_ok = curr_close < curr_kelt_l
-
-                if not swing_ok or not keltner_ok:
-                    fails = []
-                    if not swing_ok:
-                        fails.append(f"close {curr_close:.2f} ≥ swing_lo {prior_lo:.2f}")
-                    if not keltner_ok:
-                        fails.append(f"close {curr_close:.2f} ≥ kelt_lower {curr_kelt_l:.2f}")
-                    base["reason"] = "swing+keltner SHORT miss: " + " | ".join(fails)
-                    return base
-
-                entry   = curr_close
-                sl      = round(prior_hi + _SL_PADDING_ATR * curr_atr, 2)
-                sl_dist = sl - entry
-
-                reason = (
-                    f"SHORT: close {curr_close:.2f} < swing_lo {prior_lo:.2f}"
-                    f" + kelt_lower {curr_kelt_l:.2f}"
-                )
-
-            if sl_dist <= 0:
-                base["reason"] = f"zero/negative SL distance ({sl_dist:.4f})"
-                return base
-
-            return {
-                "signal":        True,
-                "entry":         round(entry, 2),
-                "sl":            sl,
-                "tp1_rr":        TP1_RR,
-                "tp2_rr":        TP2_RR,
-                "strategy_used": "Swing+Keltner",
-                "reason":        reason,
-                "entry_type":    "swing_keltner_break",
-            }
-
-        except Exception as exc:
-            logger.warning("_swing_keltner error: %s", exc, exc_info=True)
-            base["reason"] = f"swing_keltner error: {exc}"
-            return base
-
-    def _rsi50_cross(
-        self,
-        df: pd.DataFrame,
-        is_long: bool,
-        base: dict,
-    ) -> dict:
-        """
-        SECONDARY PATH (02 UTC) — RSI(14) 50-cross.
-
-        LONG  entry: RSI was below 50 on prior bar, now ≥ 50 (bullish momentum cross)
-        SHORT entry: RSI was above 50 on prior bar, now ≤ 50 (bearish momentum cross)
-
-        SL placement:
-          Long:  10-bar swing_low  - 0.25 × ATR14
-          Short: 10-bar swing_high + 0.25 × ATR14
-        """
-        try:
-            close = df["close"].astype(float)
-            high  = df["high"].astype(float)
-            low   = df["low"].astype(float)
-            atr_s = _calc_atr(df, _ATR_PERIOD)
             rsi_s = _calc_rsi(df, _RSI_PERIOD)
+            atr_s = _calc_atr(df, _ATR_PERIOD)
+
+            if len(rsi_s) < 3:
+                base["reason"] = "insufficient bars for RSI"
+                return base
 
             curr_rsi = float(rsi_s.iloc[-1])
             prev_rsi = float(rsi_s.iloc[-2])
             curr_atr = float(atr_s.iloc[-1])
 
-            if pd.isna(curr_rsi) or pd.isna(prev_rsi):
-                base["reason"] = "RSI unavailable (insufficient warm-up bars)"
-                return base
-            if curr_atr <= 0 or pd.isna(curr_atr):
-                base["reason"] = "ATR unavailable"
+            if pd.isna(curr_rsi) or pd.isna(prev_rsi) or curr_atr <= 0 or pd.isna(curr_atr):
+                base["reason"] = "RSI/ATR unavailable"
                 return base
 
-            curr_close = float(close.iloc[-1])
+            curr_close = float(df["close"].astype(float).iloc[-1])
 
             if is_long:
-                crossed = prev_rsi < 50.0 <= curr_rsi
-                if not crossed:
-                    base["reason"] = (
-                        f"RSI no cross above 50 (prev={prev_rsi:.1f}, curr={curr_rsi:.1f})"
-                    )
+                if not (prev_rsi < 50.0 <= curr_rsi):
+                    base["reason"] = f"RSI no cross above 50 (prev={prev_rsi:.1f} curr={curr_rsi:.1f})"
                     return base
-
-                sl_ref  = float(low.iloc[-10:].min())
-                entry   = curr_close
-                sl      = round(sl_ref - _SL_PADDING_ATR * curr_atr, 2)
-                sl_dist = entry - sl
-                reason  = (
-                    f"LONG: RSI crossed above 50 ({prev_rsi:.1f} → {curr_rsi:.1f})"
-                )
-
-            else:  # short
-                crossed = prev_rsi > 50.0 >= curr_rsi
-                if not crossed:
-                    base["reason"] = (
-                        f"RSI no cross below 50 (prev={prev_rsi:.1f}, curr={curr_rsi:.1f})"
-                    )
+                sl_ref  = float(df["low"].astype(float).iloc[-10:].min())
+                sl      = round(sl_ref - _SL_ATR_MULT * curr_atr, 2)
+                sl_dist = curr_close - sl
+                reason  = f"LONG: RSI crossed above 50 ({prev_rsi:.1f}→{curr_rsi:.1f})"
+            else:
+                if not (prev_rsi > 50.0 >= curr_rsi):
+                    base["reason"] = f"RSI no cross below 50 (prev={prev_rsi:.1f} curr={curr_rsi:.1f})"
                     return base
-
-                sl_ref  = float(high.iloc[-10:].max())
-                entry   = curr_close
-                sl      = round(sl_ref + _SL_PADDING_ATR * curr_atr, 2)
-                sl_dist = sl - entry
-                reason  = (
-                    f"SHORT: RSI crossed below 50 ({prev_rsi:.1f} → {curr_rsi:.1f})"
-                )
+                sl_ref  = float(df["high"].astype(float).iloc[-10:].max())
+                sl      = round(sl_ref + _SL_ATR_MULT * curr_atr, 2)
+                sl_dist = sl - curr_close
+                reason  = f"SHORT: RSI crossed below 50 ({prev_rsi:.1f}→{curr_rsi:.1f})"
 
             if sl_dist <= 0:
-                base["reason"] = f"zero/negative SL distance ({sl_dist:.4f})"
+                base["reason"] = "zero SL distance (path A)"
                 return base
 
             return {
                 "signal":        True,
-                "entry":         round(entry, 2),
+                "entry":         round(curr_close, 2),
                 "sl":            sl,
                 "tp1_rr":        TP1_RR,
                 "tp2_rr":        TP2_RR,
@@ -384,13 +266,168 @@ class ETHStrategy(BTCStrategy):
             }
 
         except Exception as exc:
-            logger.warning("_rsi50_cross error: %s", exc, exc_info=True)
-            base["reason"] = f"rsi50_cross error: {exc}"
+            logger.warning("_path_a_rsi50 error: %s", exc, exc_info=True)
+            base["reason"] = f"path_a error: {exc}"
+            return base
+
+    # ── Path B — MACD + ADX [06 UTC] ──────────────────────────────────────────
+
+    def _path_b_macd_adx(self, df: pd.DataFrame, is_long: bool, base: dict) -> dict:
+        """
+        EU Pre-Open — MACD line/signal cross + ADX ≥ 25 + MACD line on correct zero side.
+        LONG : MACD line crosses above signal AND MACD line > 0 AND ADX ≥ 25
+        SHORT: MACD line crosses below signal AND MACD line < 0 AND ADX ≥ 25
+        SL   : entry ± 1.5×ATR
+        """
+        try:
+            if len(df) < 2:
+                base["reason"] = "insufficient bars for MACD"
+                return base
+
+            macd_l, macd_s = _calc_macd(df, _MACD_FAST, _MACD_SLOW, _MACD_SIG)
+            atr_s          = _calc_atr(df, _ATR_PERIOD)
+
+            curr_ml = float(macd_l.iloc[-1]);  prev_ml = float(macd_l.iloc[-2])
+            curr_ms = float(macd_s.iloc[-1]);  prev_ms = float(macd_s.iloc[-2])
+            curr_atr = float(atr_s.iloc[-1])
+
+            if pd.isna(curr_ml) or pd.isna(prev_ml) or curr_atr <= 0:
+                base["reason"] = "MACD/ATR unavailable"
+                return base
+
+            # Compute ADX inline (signal engine already confirms ADX≥20 globally;
+            # MACD+ADX path raises the bar to ADX≥25)
+            adx_val = _calc_adx(df)
+            if adx_val < _ADX_MIN_B:
+                base["reason"] = f"ADX {adx_val:.1f} < {_ADX_MIN_B} (path B threshold)"
+                return base
+
+            curr_close = float(df["close"].astype(float).iloc[-1])
+
+            if is_long:
+                cross = prev_ml <= prev_ms and curr_ml > curr_ms   # bullish cross
+                if not cross:
+                    base["reason"] = "MACD no bullish cross"
+                    return base
+                if curr_ml < 0:
+                    base["reason"] = f"MACD line {curr_ml:.4f} < 0 (not above zero for long)"
+                    return base
+                sl      = round(curr_close - _SL_ATR_MULT * curr_atr, 2)
+                sl_dist = curr_close - sl
+                reason  = (f"LONG: MACD crossed above signal ({prev_ml:.4f}→{curr_ml:.4f})"
+                           f" + ADX={adx_val:.1f}")
+            else:
+                cross = prev_ml >= prev_ms and curr_ml < curr_ms   # bearish cross
+                if not cross:
+                    base["reason"] = "MACD no bearish cross"
+                    return base
+                if curr_ml > 0:
+                    base["reason"] = f"MACD line {curr_ml:.4f} > 0 (not below zero for short)"
+                    return base
+                sl      = round(curr_close + _SL_ATR_MULT * curr_atr, 2)
+                sl_dist = sl - curr_close
+                reason  = (f"SHORT: MACD crossed below signal ({prev_ml:.4f}→{curr_ml:.4f})"
+                           f" + ADX={adx_val:.1f}")
+
+            if sl_dist <= 0:
+                base["reason"] = "zero SL distance (path B)"
+                return base
+
+            return {
+                "signal":        True,
+                "entry":         round(curr_close, 2),
+                "sl":            sl,
+                "tp1_rr":        TP1_RR,
+                "tp2_rr":        TP2_RR,
+                "strategy_used": "MACD+ADX",
+                "reason":        reason,
+                "entry_type":    "macd_adx_cross",
+            }
+
+        except Exception as exc:
+            logger.warning("_path_b_macd_adx error: %s", exc, exc_info=True)
+            base["reason"] = f"path_b error: {exc}"
+            return base
+
+    # ── Path C — RSI + EMA Stack [10 UTC] ─────────────────────────────────────
+
+    def _path_c_rsi_ema(self, df: pd.DataFrame, is_long: bool, base: dict) -> dict:
+        """
+        EU Mid-Session — RSI(14) 50-cross + EMA9/21 stack aligned + EMA200.
+        LONG : RSI crosses above 50 + EMA9 > EMA21 + close > EMA200
+        SHORT: RSI crosses below 50 + EMA9 < EMA21 + close < EMA200
+        SL   : entry ± 1.5×ATR
+        """
+        try:
+            if len(df) < 3:
+                base["reason"] = "insufficient bars for RSI+EMA"
+                return base
+
+            rsi_s  = _calc_rsi(df, _RSI_PERIOD)
+            ema9   = _calc_ema(df, _EMA9_PERIOD)
+            ema21  = _calc_ema(df, _EMA21_PERIOD)
+            atr_s  = _calc_atr(df, _ATR_PERIOD)
+
+            curr_rsi = float(rsi_s.iloc[-1]);  prev_rsi = float(rsi_s.iloc[-2])
+            curr_e9  = float(ema9.iloc[-1]);   curr_e21 = float(ema21.iloc[-1])
+            curr_atr = float(atr_s.iloc[-1])
+            curr_close = float(df["close"].astype(float).iloc[-1])
+
+            if pd.isna(curr_rsi) or pd.isna(prev_rsi) or curr_atr <= 0:
+                base["reason"] = "RSI/EMA/ATR unavailable"
+                return base
+
+            if is_long:
+                rsi_cross  = prev_rsi < 50.0 <= curr_rsi
+                ema_stack  = curr_e9 > curr_e21
+                if not rsi_cross:
+                    base["reason"] = f"RSI no cross above 50 ({prev_rsi:.1f}→{curr_rsi:.1f})"
+                    return base
+                if not ema_stack:
+                    base["reason"] = f"EMA stack bearish (EMA9={curr_e9:.2f} < EMA21={curr_e21:.2f})"
+                    return base
+                sl      = round(curr_close - _SL_ATR_MULT * curr_atr, 2)
+                sl_dist = curr_close - sl
+                reason  = (f"LONG: RSI crossed above 50 ({prev_rsi:.1f}→{curr_rsi:.1f})"
+                           f" + EMA9({curr_e9:.2f})>EMA21({curr_e21:.2f})")
+            else:
+                rsi_cross  = prev_rsi > 50.0 >= curr_rsi
+                ema_stack  = curr_e9 < curr_e21
+                if not rsi_cross:
+                    base["reason"] = f"RSI no cross below 50 ({prev_rsi:.1f}→{curr_rsi:.1f})"
+                    return base
+                if not ema_stack:
+                    base["reason"] = f"EMA stack bullish (EMA9={curr_e9:.2f} > EMA21={curr_e21:.2f})"
+                    return base
+                sl      = round(curr_close + _SL_ATR_MULT * curr_atr, 2)
+                sl_dist = sl - curr_close
+                reason  = (f"SHORT: RSI crossed below 50 ({prev_rsi:.1f}→{curr_rsi:.1f})"
+                           f" + EMA9({curr_e9:.2f})<EMA21({curr_e21:.2f})")
+
+            if sl_dist <= 0:
+                base["reason"] = "zero SL distance (path C)"
+                return base
+
+            return {
+                "signal":        True,
+                "entry":         round(curr_close, 2),
+                "sl":            sl,
+                "tp1_rr":        TP1_RR,
+                "tp2_rr":        TP2_RR,
+                "strategy_used": "RSI+EMA",
+                "reason":        reason,
+                "entry_type":    "rsi_ema_stack",
+            }
+
+        except Exception as exc:
+            logger.warning("_path_c_rsi_ema error: %s", exc, exc_info=True)
+            base["reason"] = f"path_c error: {exc}"
             return base
 
     @property
     def strategy_names(self) -> list[str]:
         return [
-            "Swing+Keltner (14-16 UTC)",
-            "RSI50-Cross   (02 UTC)",
+            "RSI50-Cross  (02 UTC — Asia Night)",
+            "MACD+ADX     (06 UTC — EU Pre-Open)",
+            "RSI+EMA Stack (10 UTC — EU Mid-Session)",
         ]
