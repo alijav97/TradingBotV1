@@ -4,13 +4,14 @@ btc_research/eth_bot/settings.py — ETH Bot runtime configuration.
 Fully standalone — reads from .env, no dependency on any other bot's settings.
 
 == KILL-ZONE ==
-  Placeholder hours set to [1, 2, 3, 8] UTC (same as BTC Bot 2).
-  Run backtests to determine optimal ETH kill-zone hours before going live.
-  Change ETH_KZ_HOURS in .env or edit KZ_HOURS directly below.
+  KZ_HOURS = [2, 14, 15, 16] UTC — derived from 6-year ETH backtest.
+    02 UTC      → RSI 50-Cross (Asia Night, 50.9% WR)
+    14-16 UTC   → Swing Break + Keltner Channel (London Close / NY, ~55-65% combined WR)
+  Override via ETH_KZ_HOURS in .env (comma-separated, e.g. "2,14,15,16").
 
 == STRATEGY ==
-  Framework uses VB + SwingLevel v2 as a starting point (same as BTC Bot 2).
-  Run backtests to validate or swap strategy for ETH's specific behaviour.
+  Swing+Keltner at 14-16 UTC (primary) | RSI 50-Cross at 02 UTC (secondary).
+  Determined by 6-year ETH backtest — see eth_combined.py for full rationale.
 
 == .env KEYS ==
   ETH_TELEGRAM_BOT_TOKEN  — Telegram bot token (dedicated ETH bot from BotFather)
@@ -50,13 +51,17 @@ MT5_SERVER_UTC_OFFSET = 3   # Pepperstone server is UTC+3
 SYMBOL = "ETHUSD"   # Pepperstone MT5 symbol for Ethereum
 
 # ── Kill-zone hours (UTC) ──────────────────────────────────────────────────────
-# Placeholder: [1, 2, 3, 8] UTC — same as BTC Bot 2 (Asia Night + EU Open).
-# !! Run ETH backtest to confirm these are optimal for ETH before live trading !!
+# Set from 6-year ETH backtest results (23 strategies, 43,955 signals):
+#   02 UTC  → RSI 50-Cross:          WR=50.9%, AvgR=+0.754, PF=2.54  (N=55)
+#   14 UTC  → Swing+Keltner:         WR≈48% individually, ~55-65% combined
+#   15 UTC  → Keltner Channel peak:  WR=53.7%, AvgR=+0.508, PF=2.10  (N=82)
+#   16 UTC  → Swing Break volume:    highest N, consistent edge
+# Hours 14-16 map to London Close / NY session — ETH's strongest volatility window.
 _kz_env = os.environ.get("ETH_KZ_HOURS", "")
 if _kz_env:
     KZ_HOURS: list[int] = [int(h.strip()) for h in _kz_env.split(",") if h.strip()]
 else:
-    KZ_HOURS = [1, 2, 3, 8]
+    KZ_HOURS = [2, 14, 15, 16]
 
 # ── Risk & position sizing ─────────────────────────────────────────────────────
 # Same ADX-split logic as BTC Bot 2 — validated on crypto in general.

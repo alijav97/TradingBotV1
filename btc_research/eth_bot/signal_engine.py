@@ -212,11 +212,11 @@ class ETHSignalEngine:
         strategy_name = result.get("strategy_used", "ETH Strategy")
         entry_type    = result.get("entry_type", "")
 
-        # Determine session label
-        if now.hour in [1, 2, 3]:
+        # Determine session label (KZ_HOURS = [2, 14, 15, 16])
+        if now.hour == 2:
             session = "Asia Night"
-        elif now.hour == 8:
-            session = "EU Open"
+        elif now.hour in (14, 15, 16):
+            session = "London Close / NY"
         else:
             session = f"UTC {now.hour:02d}:xx"
 

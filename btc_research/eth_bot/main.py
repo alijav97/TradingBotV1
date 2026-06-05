@@ -117,8 +117,8 @@ def main() -> None:
 
     logger.info("=" * 60)
     logger.info("ETH Bot starting up")
-    logger.info("Kill-zone : %s UTC  (placeholder — confirm after backtest)", kz_str)
-    logger.info("Strategy  : Swing Level v2 + VB (placeholder — pending ETH backtest)")
+    logger.info("Kill-zone : %s UTC  (02=Asia Night RSI50-Cross | 14-16=London-Close Swing+Keltner)", kz_str)
+    logger.info("Strategy  : Swing+Keltner[14-16 UTC] | RSI50-Cross[02 UTC]  (from 6yr ETH backtest)")
     logger.info("Risk      : 3%% ADX<=25 | 2%% ADX 25-40 | 3%% ADX>=40")
     logger.info("Balance   : $%.0f starting", STARTING_BALANCE)
     logger.info("API port  : %d", API_PORT)
