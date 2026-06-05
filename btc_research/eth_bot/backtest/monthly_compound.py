@@ -42,10 +42,11 @@ RISK_TRANSITION      = 0.02   # 2% — ADX 25-40
 RISK_STRONG          = 0.04   # 4% — ADX ≥ 40
 
 # OK strategy slots (strategy_key, hour_utc, require_btc_aligned)
-# rsi50_kz is the KZ-filtered version — include it if the new backtest CSV has it
+# NOTE: rsi50_kz fires on the SAME bars as rsi_50 at H2 (same entry, different SL).
+# Only include rsi_50 (better stats: WR=50.0%, AvgR=+0.786 vs rsi50_kz WR=43.5%).
+# Including both would double-count the same trade opportunities.
 OK_SLOTS = [
     ("rsi_50",   2,  True),
-    ("rsi50_kz", 2,  True),   # will be empty if using old backtest CSV — no harm
     ("macd_adx", 6,  True),
     ("rsi_ema",  10, True),
 ]
