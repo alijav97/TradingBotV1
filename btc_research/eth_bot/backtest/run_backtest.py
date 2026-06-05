@@ -1,7 +1,7 @@
 """
 btc_research/eth_bot/backtest/run_backtest.py — Full-spectrum ETH backtest engine.
 
-Tests 23 strategies × 24 UTC hours to find the best kill-zone windows.
+Tests 25 strategies × 24 UTC hours to find the best kill-zone windows.
 
 == STRATEGIES TESTED ==
 
@@ -39,8 +39,12 @@ Tests 23 strategies × 24 UTC hours to find the best kill-zone windows.
     pin_bar      — Hammer / Shooting-star pin bar (EMA200 filtered)
 
   Multi-indicator Confluence
-    macd_adx     — MACD crossover + ADX ≥ 25 (trend-strength gate)
-    rsi_ema      — RSI 50-cross + EMA 9/21 stack + EMA200
+    macd_adx         — MACD crossover + ADX ≥ 25 (trend-strength gate)
+    rsi_ema          — RSI 50-cross + EMA 9/21 stack + EMA200
+
+  Combined Strategies (derived from 6yr backtest results — KZ-filtered)
+    swing_keltner    — Swing Break[20] AND Keltner[EMA20 ± 2×ATR14]  (14-16 UTC only)
+    rsi50_kz         — RSI14 50-cross in EMA200 direction             (02 UTC only)
 
 == FILTERS ==
   Base    : EMA200 direction (per strategy) + ADX ≥ 20 (global)
@@ -57,10 +61,12 @@ Tests 23 strategies × 24 UTC hours to find the best kill-zone windows.
 == SIMULATION RULES ==
   Entry     : close of the signal bar
   SL hit    : low ≤ SL for longs / high ≥ SL for shorts (SL checked before TP)
-  TP1 hit   : high ≥ TP1 for longs / low ≤ TP1 for shorts  [at 2R]
+  TP1 hit   : high ≥ TP1 for longs / low ≤ TP1 for shorts  [at 2R — close 50%]
   After TP1 : SL moves to entry (breakeven); trailing SL = price ± 2×ATR
-  TP2 hit   : high ≥ TP2 for longs / low ≤ TP2 for shorts  [at 5R]
+  TP2 hit   : high ≥ TP2 for longs / low ≤ TP2 for shorts  [at 4R — close remainder]
   Max hold  : 96 bars (4 days) — force-close at bar-96 close
+  Note      : TP2 changed 5R→4R after Phase 1 backtest showed ETH rarely reaches 5R
+              (avg_r ~+0.5R across all strategies); 4R materially increases TP2 hit rate
 """
 from __future__ import annotations
 
@@ -89,9 +95,12 @@ SUMMARY_CSV   = DATA_DIR / "backtest_summary.csv"
 
 # ── Global parameters ───────────────────────────────────────────────────────────
 ADX_THRESHOLD  = 20      # minimum ADX for any signal
-TP1_RR         = 2.0     # first take-profit in R
-TP2_RR         = 5.0     # second take-profit in R
-TRAIL_ATR_MULT = 2.0     # trailing SL = price ± TRAIL_ATR_MULT × ATR
+TP1_RR         = 2.0     # first take-profit in R  (close 50% of position)
+TP2_RR         = 4.0     # second take-profit in R (close remainder)
+                         # Rationale: ETH phase-1 backtest showed avg_r ~0.5R across all
+                         # strategies → very few trades reached the old 5R target.
+                         # Reducing to 4R improves TP2 hit rate while preserving R:R.
+TRAIL_ATR_MULT = 2.0     # trailing SL = price ± TRAIL_ATR_MULT × ATR (after TP1)
 MAX_HOLD_BARS  = 96      # force-close after 4 days
 WARMUP_BARS    = 260     # bars discarded while indicators stabilise (EMA200 + buffer)
 
@@ -126,8 +135,11 @@ STRATEGIES: dict[str, str] = {
     "engulfing":   "Engulfing",
     "pin_bar":     "Pin Bar",
     # Multi-indicator
-    "macd_adx":    "MACD+ADX",
-    "rsi_ema":     "RSI+EMA",
+    "macd_adx":       "MACD+ADX",
+    "rsi_ema":        "RSI+EMA",
+    # Combined strategies (KZ-filtered — fire only at specific hours)
+    "swing_keltner":  "Swing+Keltner [14-16 UTC]",
+    "rsi50_kz":       "RSI50-Cross [02 UTC]",
 }
 
 
@@ -347,8 +359,17 @@ def _precompute(df: pd.DataFrame) -> pd.DataFrame:
     df["don_hi55"] = h.rolling(55).max().shift(1)
     df["don_lo55"] = l.rolling(55).min().shift(1)
 
-    # Keltner (EMA20 ± 2×ATR10)
+    # Keltner (EMA20 ± 2×ATR10) — used by individual keltner strategy
     df["kelt_upper"], df["kelt_mid"], df["kelt_lower"] = _compute_keltner(h, l, c)
+
+    # Keltner with ATR14 (used by combined swing_keltner strategy)
+    _kelt14_mid         = _ema(c, 20)
+    df["kelt14_upper"]  = _kelt14_mid + 2.0 * df["atr14"]
+    df["kelt14_lower"]  = _kelt14_mid - 2.0 * df["atr14"]
+
+    # 20-bar swing high / low — shift(1) avoids lookahead (excludes current bar)
+    df["swing20_hi"] = h.rolling(20).max().shift(1)
+    df["swing20_lo"] = l.rolling(20).min().shift(1)
 
     # SuperTrend (10, 3)
     df["st_val"], df["st_dir"] = _compute_supertrend(h, l, c)
@@ -930,6 +951,92 @@ def _check_rsi_ema(df: pd.DataFrame, i: int, is_long: bool) -> Optional[dict]:
     return {"entry": bc, "sl": sl, "sl_dist": sl_dist}
 
 
+# ── 24. Swing + Keltner combined (14-16 UTC only) ─────────────────────────────
+def _check_swing_keltner(df: pd.DataFrame, i: int, is_long: bool) -> Optional[dict]:
+    """
+    PRIMARY combined strategy — Swing Break[20-bar] AND Keltner[EMA20 ± 2×ATR14].
+    BOTH conditions must fire simultaneously.  Fires ONLY at 14, 15, 16 UTC.
+
+    LONG : close > 20-bar swing_high  AND  close > kelt14_upper
+    SHORT: close < 20-bar swing_low   AND  close < kelt14_lower
+
+    SL: swing_lo − 0.25×ATR14 (long) / swing_hi + 0.25×ATR14 (short)
+    Expected WR: ~55-65% (Keltner alone 53.7% at 15 UTC; AND filter removes false breaks)
+    """
+    r    = df.iloc[i]
+    hour = int(r["_hour"])
+    if hour not in (14, 15, 16):
+        return None
+
+    atr    = r["atr14"];   ema200 = r["ema200"];   bc = r["close"]
+    kup    = r.get("kelt14_upper", np.nan)
+    klo    = r.get("kelt14_lower", np.nan)
+    swhi   = r.get("swing20_hi",   np.nan)
+    swlo   = r.get("swing20_lo",   np.nan)
+
+    if _nan(atr, ema200, kup, klo, swhi, swlo) or atr <= 0:
+        return None
+
+    if is_long:
+        if bc < ema200:             return None   # EMA200 direction
+        if bc <= swhi:              return None   # swing break not confirmed
+        if bc <= kup:               return None   # keltner breakout not confirmed
+        sl      = swlo - 0.25 * atr
+        sl_dist = bc - sl
+    else:
+        if bc > ema200:             return None
+        if bc >= swlo:              return None
+        if bc >= klo:               return None
+        sl      = swhi + 0.25 * atr
+        sl_dist = sl - bc
+
+    return {"entry": bc, "sl": sl, "sl_dist": sl_dist} if sl_dist > 0 else None
+
+
+# ── 25. RSI50-Cross KZ (02 UTC only) ──────────────────────────────────────────
+def _check_rsi50_kz(df: pd.DataFrame, i: int, is_long: bool) -> Optional[dict]:
+    """
+    SECONDARY combined strategy — RSI(14) crossing above/below 50 in EMA200 direction.
+    Fires ONLY at 02 UTC (Asia Night).
+
+    LONG : RSI was < 50 on prior bar, now ≥ 50
+    SHORT: RSI was > 50 on prior bar, now ≤ 50
+
+    SL: 10-bar swing_low  − 0.25×ATR14 (long)
+        10-bar swing_high + 0.25×ATR14 (short)
+    Basis: RSI 50-Cross at 02 UTC alone → 50.9% WR in phase-1 backtest
+    """
+    if i < 1:
+        return None
+    r    = df.iloc[i];  p = df.iloc[i - 1]
+    hour = int(r["_hour"])
+    if hour != 2:
+        return None
+
+    atr    = r["atr14"];   ema200 = r["ema200"];   bc = r["close"]
+    rsi_c  = r["rsi14"];   rsi_p  = p["rsi14"]
+
+    if _nan(atr, ema200, rsi_c, rsi_p) or atr <= 0:
+        return None
+
+    if is_long:
+        if bc < ema200:                     return None
+        if not (rsi_p < 50 <= rsi_c):       return None   # cross above 50
+        start   = max(0, i - 9)
+        sl_ref  = float(df.iloc[start: i + 1]["low"].min())
+        sl      = sl_ref - 0.25 * atr
+        sl_dist = bc - sl
+    else:
+        if bc > ema200:                     return None
+        if not (rsi_p > 50 >= rsi_c):       return None   # cross below 50
+        start   = max(0, i - 9)
+        sl_ref  = float(df.iloc[start: i + 1]["high"].max())
+        sl      = sl_ref + 0.25 * atr
+        sl_dist = sl - bc
+
+    return {"entry": bc, "sl": sl, "sl_dist": sl_dist} if sl_dist > 0 else None
+
+
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 _CHECKER = {
     "vb":           _check_vb,
@@ -953,8 +1060,11 @@ _CHECKER = {
     "stoch":        _check_stoch,
     "engulfing":    _check_engulfing,
     "pin_bar":      _check_pin_bar,
-    "macd_adx":     _check_macd_adx,
-    "rsi_ema":      _check_rsi_ema,
+    "macd_adx":       _check_macd_adx,
+    "rsi_ema":        _check_rsi_ema,
+    # Combined strategies (KZ hour-filtered)
+    "swing_keltner":  _check_swing_keltner,
+    "rsi50_kz":       _check_rsi50_kz,
 }
 
 
@@ -1024,7 +1134,7 @@ def _simulate_trade(df: pd.DataFrame, entry_i: int,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run(eth_df: pd.DataFrame, btc_df: pd.DataFrame) -> pd.DataFrame:
-    """Iterate every ETH H1 bar. For each bar test all 23 strategies."""
+    """Iterate every ETH H1 bar. For each bar test all 25 strategies."""
     eth_df = eth_df.copy()
     btc_df = btc_df.copy()
     eth_df["time"] = pd.to_datetime(eth_df["time"], utc=True)
@@ -1183,7 +1293,8 @@ def compute_summary(trades: pd.DataFrame) -> pd.DataFrame:
 
 def main() -> None:
     logger.info("=" * 65)
-    logger.info("ETH Full-Spectrum Backtest  (%d strategies)", len(STRATEGIES))
+    logger.info("ETH Full-Spectrum Backtest  (%d strategies)  TP1=%.0fR  TP2=%.0fR",
+                len(STRATEGIES), TP1_RR, TP2_RR)
     logger.info("=" * 65)
 
     if not ETH_CSV.exists() or not BTC_CSV.exists():

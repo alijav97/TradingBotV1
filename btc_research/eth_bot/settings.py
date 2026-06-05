@@ -67,17 +67,21 @@ else:
 # Same ADX-split logic as BTC Bot 2 — validated on crypto in general.
 # Revisit after ETH-specific backtest.
 STARTING_BALANCE      = 500.0   # USD paper trading account
-RISK_PCT_EARLY_TREND  = 0.03    # 3% — ADX ≤ ADX_SPLIT_EARLY_MAX (early trend)
-RISK_PCT_TRANSITION   = 0.02    # 2% — ADX between early and strong (dead zone)
-RISK_PCT_STRONG       = 0.03    # 3% — ADX ≥ ADX_SPLIT_STRONG_MIN (strong trend)
+RISK_PCT_EARLY_TREND  = 0.03    # 3% — ADX ≤ 25 (early trend, lower conviction)
+RISK_PCT_TRANSITION   = 0.02    # 2% — ADX 25-40 (transition / dead zone)
+RISK_PCT_STRONG       = 0.04    # 4% — ADX ≥ 40 (strong trend + double confluence = high conviction)
+                                 # 4% on $500 = $20 at risk per trade in the strong zone
 
 ADX_SPLIT_EARLY_MAX   = 25      # ADX ≤ 25  → early trend → 3% risk
 ADX_SPLIT_STRONG_MIN  = 40      # ADX ≥ 40  → strong trend → 3% risk
                                  # ADX 25-40 → transition  → 2% risk
 
 # ── TP / SL ratios ─────────────────────────────────────────────────────────────
-TP1_RR          = 2.0    # TP1 at 2R — partial close, SL to breakeven
-TP2_RR          = 5.0    # TP2 at 5R — full close
+TP1_RR          = 2.0    # TP1 at 2R — partial close (50%), SL to breakeven
+TP2_RR          = 4.0    # TP2 at 4R — full close (remaining 50%)
+                          # Reduced from 5R: phase-1 backtest showed avg_r ~0.5R
+                          # across all strategies → very few trades reached 5R on ETH.
+                          # 4R materially increases hit rate while preserving 2:1 TP2/TP1 ratio.
 TRAIL_ATR_MULT  = 2.0    # Trailing SL after TP1: peak/trough ± 2×ATR
 MAX_HOLD_BARS   = 96     # 96 H1 bars = 4 days — force-close if still open
 
