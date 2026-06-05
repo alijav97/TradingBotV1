@@ -47,12 +47,9 @@ STRONG_WIN_RATE     = 0.55    # "strong" tier
 STRONG_AVG_R        = 0.80
 STRONG_PROFIT_FACTOR= 1.60
 
-STRATEGIES = ["VB", "swing_break", "swing_retest"]
-STRATEGY_LABELS = {
-    "VB":            "Volatility Breakout",
-    "swing_break":   "Swing Level Break",
-    "swing_retest":  "Swing Level Retest",
-}
+# Strategies are discovered dynamically from the summary CSV.
+# Labels come from the "strategy_label" column written by run_backtest.py.
+_FALLBACK_LABELS: dict[str, str] = {}   # populated at load time
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -79,7 +76,18 @@ def _load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     trades  = pd.read_csv(TRADES_CSV, parse_dates=["entry_time", "exit_time"])
     summary = pd.read_csv(SUMMARY_CSV)
     logger.info("Loaded %d trades, %d summary rows", len(trades), len(summary))
+
+    # Build global label map from summary CSV
+    global _FALLBACK_LABELS
+    if "strategy_label" in summary.columns:
+        _FALLBACK_LABELS = dict(zip(summary["strategy"], summary["strategy_label"]))
+
     return trades, summary
+
+
+def _label(strat: str) -> str:
+    """Return human-readable label for a strategy key."""
+    return _FALLBACK_LABELS.get(strat, strat)
 
 
 def _tier(wr: float, avg_r: float, pf: float, n: int) -> str:
@@ -132,7 +140,7 @@ def _print_strategy_ranking(summary: pd.DataFrame) -> None:
     _hdr("2. STRATEGY RANKING  (all hours combined)")
 
     rows = []
-    for strat in STRATEGIES:
+    for strat in sorted(summary["strategy"].unique()):
         sub = summary[summary["strategy"] == strat]
         if sub.empty:
             continue
@@ -167,7 +175,7 @@ def _print_strategy_ranking(summary: pd.DataFrame) -> None:
           f"{'BTC-N':>5} {'BTC-WR%':>8} {'BTC-AvgR':>9} {'BTC-PF':>7}")
     _sep()
     for r in rows:
-        label = STRATEGY_LABELS.get(r["strategy"], r["strategy"])
+        label = _label(r["strategy"])
         print(
             f"  {label:<22} {r['n']:>5}  {100*r['wr']:>5.1f}%  {r['avg_r']:>+6.3f}  {r['pf']:>5.2f}  │  "
             f"{r['nb']:>5}  {100*r['wrb']:>6.1f}%  {r['avg_rb']:>+7.3f}  {r['pfb']:>6.2f}"
@@ -183,7 +191,7 @@ def _print_hourly(summary: pd.DataFrame, strategy: str) -> None:
         print(f"  No data for {strategy}")
         return
 
-    label = STRATEGY_LABELS.get(strategy, strategy)
+    label = _label(strategy)
     print(f"\n  ── {label} ──")
     print(
         f"  {'UTC':>4}  {'N':>5}  {'WR%':>6}  {'AvgR':>7}  {'PF':>6}  {'MaxDD':>7}  {'Tier':<12}  │  "
@@ -313,7 +321,7 @@ def _recommend_kz(summary: pd.DataFrame) -> dict[str, list[int]]:
     _sep()
 
     for h, r in ranked:
-        label = STRATEGY_LABELS.get(r["strategy"], r["strategy"])
+        label = _label(r["strategy"])
         t = _tier(r["wrb"], r["avg_rb"], r["pfb"], r["nb"])
         if "STRONG" in t:
             strong_hours.append(h)
@@ -379,7 +387,7 @@ def _print_best_strategy(summary: pd.DataFrame, kz_hours: list[int]) -> None:
             pf   = best["profit_factor"]
             n    = int(best["n_trades"])
 
-        label = STRATEGY_LABELS.get(best["strategy"], best["strategy"])
+        label = _label(best["strategy"])
         print(f"  UTC {h:02d}:xx  →  {label}  [{mode}]  "
               f"N={n}  WR={100*wr:.1f}%  AvgR={avg:+.3f}  PF={pf:.2f}")
 
@@ -495,10 +503,10 @@ def main() -> None:
     # 2. Strategy ranking
     _print_strategy_ranking(summary)
 
-    # 3. Per-strategy hourly breakdown
+    # 3. Per-strategy hourly breakdown (all strategies found in summary)
     _hdr("3. PER-STRATEGY HOURLY BREAKDOWN")
     all_good_hours = []
-    for strat in STRATEGIES:
+    for strat in sorted(summary["strategy"].unique()):
         result = _print_hourly(summary, strat)
         if result:
             good, good_btc = result
