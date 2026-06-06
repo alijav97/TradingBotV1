@@ -82,7 +82,7 @@ def _simulate_onepos(cand: pd.DataFrame) -> dict:
     """One-position-at-a-time compound sim. cand sorted by entry_time."""
     balance = STARTING_BALANCE
     peak = balance
-    last_exit = pd.Timestamp.min.tz_localize(None)
+    last_exit = pd.Timestamp.min
     records = []
 
     cur_month = None
@@ -177,6 +177,11 @@ def main() -> None:
         print(f"ERROR: {CSV} not found -- run run_backtest.py first")
         sys.exit(1)
     df = pd.read_csv(CSV, parse_dates=["entry_time", "exit_time"])
+    # Normalise to tz-naive so chronological comparisons (et < last_exit) work
+    # regardless of whether the CSV stored tz-aware or tz-naive timestamps.
+    for _col in ("entry_time", "exit_time"):
+        if df[_col].dt.tz is not None:
+            df[_col] = df[_col].dt.tz_convert("UTC").dt.tz_localize(None)
     df = df[df["entry_time"].dt.year >= START_YEAR].reset_index(drop=True)
 
     sets = [
