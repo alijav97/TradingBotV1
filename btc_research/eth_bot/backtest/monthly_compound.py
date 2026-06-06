@@ -63,6 +63,14 @@ RISK_STRONG          = 0.05   # 5% -- ADX >= 40
 OCT_RISK_FACTOR      = 0.5    # halve risk in October
 CB_THRESHOLD         = -0.10  # halt month after -10% realised drawdown
 
+# Equity-curve throttle (LOCKED via equity_cb_sweep.py)
+#   When account is >= 15% below its running peak, cut risk to x0.20 until a new
+#   peak is made. Starves the multi-month regime bleed (e.g. mid-2023) that the
+#   month-based CB above cannot catch. Sweep winner: $173k / -27.5% DD / CL15
+#   (vs un-throttled S4+9: $943k / -42.2% / CL16, and pure-S4: $14k / -30% / CL7).
+DD_THROTTLE_TRIGGER  = -0.15  # drawdown-from-peak that activates the throttle
+DD_THROTTLE_FACTOR   = 0.20   # risk multiplier while throttled
+
 # S4 8-slot strategy set
 # Format: (strategy_key, hour_utc, require_btc_aligned)
 # NOTE: rsi50_kz excluded -- fires on same bars as rsi_50 at H2 (double-count).
@@ -81,29 +89,30 @@ FINAL_SLOTS = [
 ]
 
 # ---------------------------------------------------------------------------
-# COMPLEMENT LEG (regime_complement.py finding)
+# COMPLEMENT LEG (regime_complement.py finding) -- FULL 9 SLOTS
 # ---------------------------------------------------------------------------
 # The "anti-correlated hedge" idea failed -- NOTHING in the data is negatively
 # correlated with S4 (everything is +corr; in chop, mean-reversion bleeds too).
 # BUT specific engulfing/pin_bar HOUR-slots are net-positive standalone AND
-# stay positive INSIDE S4's losing months (badTotR > 0). They are an additive
-# diversifier, not a hedge. Each entry below: standalone AvgR / bad-month TotR.
-#   set ADD_COMPLEMENT = False to reproduce the pure-S4 baseline for comparison.
+# stay positive INSIDE S4's losing months. They are an additive diversifier.
 #
-# TRIM (drawdown control): the full 9-slot add pushed MaxDD to -42% and MaxCL to
-# 16 because low-WR MR slots cluster their losses. So we select by AvgR AND WR --
-# keep only slots with WR >= 31.8% (the cleanest MR available), drop the 6 low-WR
-# streak-makers. Kept 3 still capture +91.6R of the +150R full-add edge.
-# Each entry: compounded AvgR / WR% (from the 9-slot per-strategy run).
+# DRAWDOWN CONTROL: trimming to "best WR" slots made DD *worse* (less
+# diversification -> lumpier equity). The lever that works is the equity-curve
+# throttle above (DD_THROTTLE_*), NOT slot selection. So we keep ALL 9 slots
+# (max diversification + max R) and tame the drawdown with the throttle.
+# Each entry: full-add compounded AvgR / WR%.
 ADD_COMPLEMENT = True
 COMPLEMENT_SLOTS = [
-    ("engulfing", 2,  False),  # +0.608 / 32.4%   best edge + best WR
+    ("engulfing",  2, False),  # +0.608 / 32.4%
     ("engulfing", 16, False),  # +0.467 / 31.8%
     ("pin_bar",   19, False),  # +0.427 / 32.4%
+    ("pin_bar",   11, False),  # +0.379 / 24.1%
+    ("pin_bar",   13, False),  # +0.316 / 28.0%
+    ("pin_bar",    2, False),  # +0.308 / 29.3%
+    ("engulfing",  1, False),  # +0.197 / 29.7%
+    ("engulfing",  5, False),  # +0.143 / 25.0%
+    ("engulfing",  8, False),  # +0.068 / 21.9%
 ]
-# Dropped (low WR -> streak/drawdown risk):
-#   pin_bar[11] 24.1% | pin_bar[13] 28.0% | pin_bar[02] 29.3%
-#   engulfing[01] 29.7% | engulfing[05] 25.0% | engulfing[08] 21.9%
 
 if ADD_COMPLEMENT:
     FINAL_SLOTS = FINAL_SLOTS + COMPLEMENT_SLOTS
@@ -155,8 +164,10 @@ def main() -> None:
         print("ERROR: No matching trades found -- check strategy names in CSV")
         sys.exit(1)
 
-    # -- Compound simulation (with S4 October cut + circuit breaker) -----------
+    # -- Compound simulation (Oct cut + monthly CB + equity-curve throttle) ----
     balance = STARTING_BALANCE
+    peak_bal = balance        # running high-water mark for the equity throttle
+    n_throttled = 0           # trades taken at reduced risk while below peak
     records = []
 
     cur_month       = None
@@ -187,9 +198,17 @@ def main() -> None:
         if et.month == 10:
             rp *= OCT_RISK_FACTOR
 
+        # Equity-curve throttle: if >=15% below peak, cut risk to x0.20
+        dd_from_peak = (balance - peak_bal) / peak_bal
+        throttled = dd_from_peak <= DD_THROTTLE_TRIGGER
+        if throttled:
+            rp *= DD_THROTTLE_FACTOR
+            n_throttled += 1
+
         risk_usd = balance * rp
         pnl_usd  = risk_usd * r_val
         balance += pnl_usd
+        peak_bal = max(peak_bal, balance)
 
         records.append({
             "entry_time": t["entry_time"],
@@ -231,10 +250,11 @@ def main() -> None:
     print(f"         : rsi_ema[10] | keltner[14] | ema_cross[14] | keltner[15]")
     if ADD_COMPLEMENT:
         slot_str = " | ".join(f"{s}[{h:02d}]" for s, h, _ in COMPLEMENT_SLOTS)
-        print(f"  +Compl : {slot_str}  ({len(COMPLEMENT_SLOTS)} MR slots, WR>=31.8%)")
+        print(f"  +Compl : {slot_str}  ({len(COMPLEMENT_SLOTS)} MR slots)")
     else:
         print(f"  +Compl : OFF  (pure S4 baseline)")
     print(f"  Risk   : 2% ADX<=25 | 3% ADX 25-40 | 5% ADX>=40  (Config D)")
+    print(f"  Throttle: risk x{DD_THROTTLE_FACTOR:g} when >={abs(DD_THROTTLE_TRIGGER)*100:.0f}% below peak")
     print(f"  S4     : Oct risk x{OCT_RISK_FACTOR} | circuit breaker {CB_THRESHOLD*100:.0f}% monthly")
     print(f"  Capital: ${STARTING_BALANCE:,.2f}  |  TP1=2R / TP2=4R")
     print(f"  Period : {sim['entry_time'].min().strftime('%Y-%m')} -> "
@@ -461,6 +481,7 @@ def main() -> None:
     print(f"  Active months       : {active_months}")
     print(f"  Avg trades / month  : {len(sim) / active_months:.1f}")
     print(f"  Trades skipped (CB) : {n_halted}  (monthly circuit breaker)")
+    print(f"  Trades throttled    : {n_throttled}  (risk x{DD_THROTTLE_FACTOR:g} while >={abs(DD_THROTTLE_TRIGGER)*100:.0f}% below peak)")
     print(_bar())
     print(f"  Max drawdown        : {max_dd:.1f}%  (at {max_dd_date})")
     print(f"  Max consecutive L's : {max_cons_loss}")
