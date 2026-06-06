@@ -89,18 +89,21 @@ FINAL_SLOTS = [
 # stay positive INSIDE S4's losing months (badTotR > 0). They are an additive
 # diversifier, not a hedge. Each entry below: standalone AvgR / bad-month TotR.
 #   set ADD_COMPLEMENT = False to reproduce the pure-S4 baseline for comparison.
+#
+# TRIM (drawdown control): the full 9-slot add pushed MaxDD to -42% and MaxCL to
+# 16 because low-WR MR slots cluster their losses. So we select by AvgR AND WR --
+# keep only slots with WR >= 31.8% (the cleanest MR available), drop the 6 low-WR
+# streak-makers. Kept 3 still capture +91.6R of the +150R full-add edge.
+# Each entry: compounded AvgR / WR% (from the 9-slot per-strategy run).
 ADD_COMPLEMENT = True
 COMPLEMENT_SLOTS = [
-    ("engulfing", 16, False),  # +0.48 / +23.6  (best)
-    ("engulfing",  1, False),  # +0.20 / +20.5
-    ("pin_bar",    2, False),  # +0.36 / +19.6
-    ("engulfing",  8, False),  # +0.11 / +14.4
-    ("engulfing",  2, False),  # +0.41 / +13.4
-    ("engulfing",  5, False),  # +0.19 / +11.3
-    ("pin_bar",   19, False),  # +0.32 / +7.5
-    ("pin_bar",   13, False),  # +0.10 / +6.8
-    ("pin_bar",   11, False),  # +0.42 / +5.0
+    ("engulfing", 2,  False),  # +0.608 / 32.4%   best edge + best WR
+    ("engulfing", 16, False),  # +0.467 / 31.8%
+    ("pin_bar",   19, False),  # +0.427 / 32.4%
 ]
+# Dropped (low WR -> streak/drawdown risk):
+#   pin_bar[11] 24.1% | pin_bar[13] 28.0% | pin_bar[02] 29.3%
+#   engulfing[01] 29.7% | engulfing[05] 25.0% | engulfing[08] 21.9%
 
 if ADD_COMPLEMENT:
     FINAL_SLOTS = FINAL_SLOTS + COMPLEMENT_SLOTS
@@ -227,8 +230,8 @@ def main() -> None:
     print(f"  Slots  : rsi_50[02] | ema_cross[05] | macd_adx[06] | rsi_50[07]")
     print(f"         : rsi_ema[10] | keltner[14] | ema_cross[14] | keltner[15]")
     if ADD_COMPLEMENT:
-        print(f"  +Compl : engulfing[01/02/05/08/16] | pin_bar[02/11/13/19]  "
-              f"({len(COMPLEMENT_SLOTS)} MR slots)")
+        slot_str = " | ".join(f"{s}[{h:02d}]" for s, h, _ in COMPLEMENT_SLOTS)
+        print(f"  +Compl : {slot_str}  ({len(COMPLEMENT_SLOTS)} MR slots, WR>=31.8%)")
     else:
         print(f"  +Compl : OFF  (pure S4 baseline)")
     print(f"  Risk   : 2% ADX<=25 | 3% ADX 25-40 | 5% ADX>=40  (Config D)")
