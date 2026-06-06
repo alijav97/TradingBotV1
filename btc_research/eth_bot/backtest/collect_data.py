@@ -26,9 +26,10 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 logging.basicConfig(
@@ -57,6 +58,39 @@ M15_BAR_COUNT = 200_000   # ~5.7y of M15 (96 bars/day); MT5 trims to what it has
 #           3 years ≈ 26,280 bars
 # Pepperstone MT5 typically has 3-5 years of H1 history available.
 BAR_COUNT = 50_000   # fetch as much as possible, trim what MT5 returns
+
+
+_BARS_PER_DAY = {"M5": 288, "M15": 96, "H1": 24}
+
+
+def _fetch_range_chunked(mt5, symbol, tf, count: int, timeframe: str):
+    """
+    Fetch ~`count` bars by walking copy_rates_range() in yearly windows.
+
+    copy_rates_from_pos() can exceed the terminal's "Max bars in chart" cap on
+    large M15/M5 requests and return (-2, 'Invalid params') instead of just
+    truncating. copy_rates_range() over bounded windows (~35k M15 bars/yr) stays
+    under the cap. Boundary-overlap bars are de-duplicated downstream by time.
+    Returns a concatenated numpy recarray, or None if nothing came back.
+    """
+    per_day  = _BARS_PER_DAY.get(timeframe, 24)
+    days_back = int(count / per_day) + 5
+    end   = datetime.now(timezone.utc)
+    start = end - timedelta(days=days_back)
+    chunks = []
+    cur = start
+    while cur < end:
+        nxt = min(cur + timedelta(days=365), end)
+        r = mt5.copy_rates_range(symbol, tf, cur, nxt)
+        if r is not None and len(r):
+            chunks.append(np.asarray(r))
+            logger.info("  chunk %s → %s: %d bars", cur.date(), nxt.date(), len(r))
+        else:
+            logger.info("  chunk %s → %s: (empty)", cur.date(), nxt.date())
+        cur = nxt
+    if not chunks:
+        return None
+    return np.concatenate(chunks)
 
 
 def _fetch_from_mt5(symbol: str, count: int, timeframe: str = "H1") -> pd.DataFrame:
@@ -101,6 +135,14 @@ def _fetch_from_mt5(symbol: str, count: int, timeframe: str = "H1") -> pd.DataFr
     logger.info("Fetching %s %s — requesting %d bars...", symbol, timeframe, count)
     rates = mt5.copy_rates_from_pos(symbol, tf, 0, count)
 
+    # Large M15/M5 pulls can exceed the terminal's max-bars cap and return
+    # (-2 'Invalid params') instead of truncating. Fall back to a date-ranged
+    # chunked fetch, which sidesteps the cap.
+    if rates is None or len(rates) == 0:
+        logger.warning("copy_rates_from_pos failed for %s (%s) — "
+                       "falling back to chunked range fetch", symbol, mt5.last_error())
+        rates = _fetch_range_chunked(mt5, symbol, tf, count, timeframe)
+
     if rates is None or len(rates) == 0:
         logger.error("No data returned for %s: %s", symbol, mt5.last_error())
         mt5.shutdown()
@@ -115,7 +157,8 @@ def _fetch_from_mt5(symbol: str, count: int, timeframe: str = "H1") -> pd.DataFr
 
     df = df.rename(columns={"tick_volume": "volume"})
     df = df[["time", "open", "high", "low", "close", "volume"]].copy()
-    df = df.sort_values("time").reset_index(drop=True)
+    # de-dup boundary-overlap bars from chunked range fetches, then order
+    df = df.drop_duplicates(subset="time").sort_values("time").reset_index(drop=True)
 
     mt5.shutdown()
     return df
