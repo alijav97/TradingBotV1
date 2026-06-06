@@ -2,9 +2,12 @@
 btc_research/eth_bot/backtest/collect_data.py — Fetch ETH + BTC H1 history from MT5.
 
 Run this ON THE VPS (where MT5 is running) to collect historical data.
-Saves two CSV files:
+Saves H1 (existing) plus M15 (for finer BTC->ETH entry-timing research):
   btc_research/eth_bot/backtest/data/ETHUSD_H1.csv
   btc_research/eth_bot/backtest/data/BTCUSD_H1.csv
+  btc_research/eth_bot/backtest/data/ETHUSD_M15.csv
+  btc_research/eth_bot/backtest/data/BTCUSD_M15.csv
+(Existing H1 files are loaded from cache; only the missing M15 files fetch.)
 
 BTC data is collected alongside ETH because BTC price action directly
 drives ETH movement — we'll use BTC trend as a confluence filter in the
@@ -43,6 +46,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 ETH_CSV = DATA_DIR / "ETHUSD_H1.csv"
 BTC_CSV = DATA_DIR / "BTCUSD_H1.csv"
 
+# M15 files for the finer BTC->ETH lead-lag / entry-timing research
+ETH_M15_CSV = DATA_DIR / "ETHUSD_M15.csv"
+BTC_M15_CSV = DATA_DIR / "BTCUSD_M15.csv"
+M15_BAR_COUNT = 200_000   # ~5.7y of M15 (96 bars/day); MT5 trims to what it has
+
 # ── How many bars to fetch ─────────────────────────────────────────────────────
 # H1 bars:  1 year  ≈  8,760 bars
 #           2 years ≈ 17,520 bars
@@ -51,8 +59,8 @@ BTC_CSV = DATA_DIR / "BTCUSD_H1.csv"
 BAR_COUNT = 50_000   # fetch as much as possible, trim what MT5 returns
 
 
-def _fetch_from_mt5(symbol: str, count: int) -> pd.DataFrame:
-    """Connect to MT5, fetch H1 OHLCV, return DataFrame with true UTC timestamps."""
+def _fetch_from_mt5(symbol: str, count: int, timeframe: str = "H1") -> pd.DataFrame:
+    """Connect to MT5, fetch OHLCV, return DataFrame with true UTC timestamps."""
     try:
         import MetaTrader5 as mt5
     except ImportError:
@@ -86,9 +94,12 @@ def _fetch_from_mt5(symbol: str, count: int) -> pd.DataFrame:
         info = mt5.account_info()
         logger.info("MT5 connected — account %s", info.login if info else "?")
 
+    _TF_MAP = {"M5": mt5.TIMEFRAME_M5, "M15": mt5.TIMEFRAME_M15,
+               "H1": mt5.TIMEFRAME_H1}
+    tf = _TF_MAP.get(timeframe, mt5.TIMEFRAME_H1)
     mt5.symbol_select(symbol, True)
-    logger.info("Fetching %s H1 — requesting %d bars...", symbol, count)
-    rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, count)
+    logger.info("Fetching %s %s — requesting %d bars...", symbol, timeframe, count)
+    rates = mt5.copy_rates_from_pos(symbol, tf, 0, count)
 
     if rates is None or len(rates) == 0:
         logger.error("No data returned for %s: %s", symbol, mt5.last_error())
@@ -125,8 +136,9 @@ def _check_gaps(df: pd.DataFrame, symbol: str) -> None:
                            df["time"].iloc[idx])
 
 
-def collect(symbol: str, out_path: Path) -> pd.DataFrame:
-    """Fetch, validate, and save data for one symbol."""
+def collect(symbol: str, out_path: Path, timeframe: str = "H1",
+            count: int = BAR_COUNT) -> pd.DataFrame:
+    """Fetch, validate, and save data for one symbol/timeframe."""
     if out_path.exists():
         logger.info("%s already exists — loading cached file", out_path.name)
         df = pd.read_csv(out_path, parse_dates=["time"])
@@ -134,7 +146,7 @@ def collect(symbol: str, out_path: Path) -> pd.DataFrame:
                     len(df), df["time"].iloc[0], df["time"].iloc[-1])
         return df
 
-    df = _fetch_from_mt5(symbol, BAR_COUNT)
+    df = _fetch_from_mt5(symbol, count, timeframe)
     if df.empty:
         logger.error("Failed to fetch %s", symbol)
         return df
@@ -160,6 +172,12 @@ def main() -> None:
 
     eth_df = collect("ETHUSD", ETH_CSV)
     btc_df = collect("BTCUSD", BTC_CSV)
+
+    # M15 candles for finer entry-timing / lead-lag research
+    logger.info("")
+    logger.info("Fetching M15 candles (BTC->ETH entry-timing research)...")
+    collect("ETHUSD", ETH_M15_CSV, "M15", M15_BAR_COUNT)
+    collect("BTCUSD", BTC_M15_CSV, "M15", M15_BAR_COUNT)
 
     if eth_df.empty or btc_df.empty:
         logger.error("Data collection failed — check MT5 connection")

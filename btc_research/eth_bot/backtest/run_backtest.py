@@ -65,6 +65,9 @@ Tests 25 strategies × 24 UTC hours to find the best kill-zone windows.
   After TP1 : SL moves to entry (breakeven); trailing SL = price ± 2×ATR
   TP2 hit   : high ≥ TP2 for longs / low ≤ TP2 for shorts  [at 4R — close remainder]
   Max hold  : 96 bars (4 days) — force-close at bar-96 close
+  r_achieved: BLENDED across the 50/50 scale-out (matches live paper_trader):
+              clean run = +3R (0.5*2R + 0.5*4R); TP1-then-breakeven = +1R;
+              full stop before TP1 = -1R. (Old model was single-unit: +4R / 0R.)
   Note      : TP2 changed 5R→4R after Phase 1 backtest showed ETH rarely reaches 5R
               (avg_r ~+0.5R across all strategies); 4R materially increases TP2 hit rate
 """
@@ -1075,20 +1078,34 @@ _CHECKER = {
 def _simulate_trade(df: pd.DataFrame, entry_i: int,
                     entry: float, sl: float, sl_dist: float,
                     is_long: bool, atr_entry: float) -> dict:
-    """Walk forward bars from entry_i+1, return exit info."""
+    """Walk forward bars; model the LIVE 50%-at-TP1 / 50%-at-TP2 scale-out.
+
+    r_achieved is the BLENDED R across BOTH halves (matches paper_trader):
+      * 50% closes at TP1  -> +0.5 * TP1_RR  (= +1.0R) banked
+      * remaining 50% rides: stop to breakeven after TP1, trailing 2xATR;
+        it exits at TP2 (+0.5 * TP2_RR = +2.0R), the trailing/breakeven stop,
+        or the max-hold mark.
+      * if TP1 NEVER hits, the FULL position exits at SL (-1R) or max-hold.
+
+    So a clean run = +3R (not the old single-unit +4R); a "TP1 then fade to
+    breakeven" = +1R (not the old 0R) -- the latter also flips that trade from
+    a recorded loss to a win, since outcome = (r_achieved > 0).
+    """
     tp1 = entry + sl_dist * TP1_RR * (1 if is_long else -1)
     tp2 = entry + sl_dist * TP2_RR * (1 if is_long else -1)
+    sgn = 1.0 if is_long else -1.0
 
-    cur_sl  = sl
-    tp1_hit = False
-    n_bars  = len(df)
+    cur_sl   = sl
+    tp1_hit  = False
+    realized = 0.0          # blended R already banked from the closed half
+    n_bars   = len(df)
 
     for j in range(entry_i + 1, min(entry_i + MAX_HOLD_BARS + 1, n_bars)):
         bh = float(df.iloc[j]["high"])
         bl = float(df.iloc[j]["low"])
         bc = float(df.iloc[j]["close"])
 
-        # Trailing SL ratchet after TP1
+        # Trailing SL ratchet after TP1 (applies to the remaining half)
         if tp1_hit and atr_entry > 0:
             trail = TRAIL_ATR_MULT * atr_entry
             if is_long:
@@ -1098,35 +1115,43 @@ def _simulate_trade(df: pd.DataFrame, entry_i: int,
                 new_t = bc + trail
                 if new_t < cur_sl: cur_sl = new_t
 
-        # TP2
-        if is_long  and bh >= tp2:
-            return {"exit_reason": "TP2",  "exit_bar": j,
-                    "exit_price": tp2,  "r_achieved": round((tp2 - entry) / sl_dist, 3)}
-        if not is_long and bl <= tp2:
-            return {"exit_reason": "TP2",  "exit_bar": j,
-                    "exit_price": tp2,  "r_achieved": round((entry - tp2) / sl_dist, 3)}
+        # TP2 — remaining half exits at +TP2_RR (+2R blended)
+        hit_tp2 = (bh >= tp2) if is_long else (bl <= tp2)
+        if hit_tp2:
+            if not tp1_hit:                  # same bar pierced BOTH TP1 and TP2
+                realized += 0.5 * TP1_RR
+            realized += 0.5 * TP2_RR
+            return {"exit_reason": "TP2", "exit_bar": j,
+                    "exit_price": tp2, "r_achieved": round(realized, 3)}
 
-        # SL (checked AFTER TP2 check → TP2 wins on same bar)
-        if is_long  and bl <= cur_sl:
-            reason = "SL_AFTER_TP1" if tp1_hit else "SL"
+        # SL (checked AFTER TP2 → TP2 wins same-bar ties)
+        hit_sl = (bl <= cur_sl) if is_long else (bh >= cur_sl)
+        if hit_sl:
+            sl_r = (cur_sl - entry) / sl_dist * sgn
+            if tp1_hit:
+                realized += 0.5 * sl_r       # only the remaining half stops out
+                reason = "SL_AFTER_TP1"
+            else:
+                realized += 1.0 * sl_r       # full position stopped (≈ -1R)
+                reason = "SL"
             return {"exit_reason": reason, "exit_bar": j,
-                    "exit_price": cur_sl, "r_achieved": round((cur_sl - entry) / sl_dist, 3)}
-        if not is_long and bh >= cur_sl:
-            reason = "SL_AFTER_TP1" if tp1_hit else "SL"
-            return {"exit_reason": reason, "exit_bar": j,
-                    "exit_price": cur_sl, "r_achieved": round((entry - cur_sl) / sl_dist, 3)}
+                    "exit_price": cur_sl, "r_achieved": round(realized, 3)}
 
-        # TP1
+        # TP1 — close 50% at +TP1_RR (+1R blended), move stop to breakeven
         if not tp1_hit:
-            if is_long  and bh >= tp1: tp1_hit = True;  cur_sl = entry
-            if not is_long and bl <= tp1: tp1_hit = True;  cur_sl = entry
+            hit_tp1 = (bh >= tp1) if is_long else (bl <= tp1)
+            if hit_tp1:
+                tp1_hit = True
+                realized += 0.5 * TP1_RR
+                cur_sl = entry
 
-    # Max-hold exit
+    # Max-hold exit — mark the remaining position to market
     last_j  = min(entry_i + MAX_HOLD_BARS, n_bars - 1)
     exit_px = float(df.iloc[last_j]["close"])
-    r_val   = (exit_px - entry) / sl_dist if is_long else (entry - exit_px) / sl_dist
+    mark_r  = (exit_px - entry) / sl_dist * sgn
+    realized += (0.5 if tp1_hit else 1.0) * mark_r
     return {"exit_reason": "MAX_HOLD", "exit_bar": last_j,
-            "exit_price": exit_px, "r_achieved": round(r_val, 3)}
+            "exit_price": exit_px, "r_achieved": round(realized, 3)}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
