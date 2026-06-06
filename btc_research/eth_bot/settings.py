@@ -4,15 +4,23 @@ btc_research/eth_bot/settings.py — ETH Bot runtime configuration.
 Fully standalone — reads from .env, no dependency on any other bot's settings.
 
 == KILL-ZONE ==
-  KZ_HOURS = [2, 6, 10] UTC — confirmed by 6-year ETH backtest phase-2 (BTC-aligned).
-    02 UTC → RSI 50-Cross          (Asia Night,    WR=50.0%, AvgR=+0.786)
-    06 UTC → MACD+ADX              (EU Pre-Open,   WR=45.0%, AvgR=+0.660)
-    10 UTC → RSI+EMA Stack         (EU Mid-Session,WR=48.1%, AvgR=+0.706)
-  Override via ETH_KZ_HOURS in .env (comma-separated, e.g. "2,6,10").
+  KZ_HOURS = [2, 5, 6, 10, 14, 15] — expanded via MaxDD-gated analysis (cap = -35%).
+
+  BASELINE (BTC-aligned, original 3 slots):
+    02 UTC → RSI 50-Cross            (Asia Night,    WR=50.0%, AvgR=+0.786)
+    06 UTC → MACD+ADX                (EU Pre-Open,   WR=45.0%, AvgR=+0.660)
+    10 UTC → RSI+EMA Stack           (EU Mid-Session,WR=48.1%, AvgR=+0.706)
+
+  EXPANSION (no BTC filter — 5 additional slots that kept MaxDD ≥ -35%):
+    05 UTC → EMA Cross 9/21          (Asia Morning,  WR=52.4%, AvgR=+0.787) ★
+    14 UTC → Keltner → EMA fallback  (NY Pre-Open,   WR=48.3%/44.7%)
+    15 UTC → Keltner → MACD fallback (NY Open,       WR=53.7%/45.2%) ★ best slot
+
+  Portfolio result: CAGR≈+168% | 5yr $500→$69,255 | MaxDD=-33.5% | ~4.9 trades/mo
+  Override via ETH_KZ_HOURS in .env (comma-separated, e.g. "2,5,6,10,14,15").
 
 == STRATEGY ==
-  RSI 50-Cross [02 UTC] | MACD+ADX [06 UTC] | RSI+EMA Stack [10 UTC].
-  All BTC-aligned only. See eth_combined.py for implementation details.
+  See eth_combined.py for all 5 paths and fallback routing (Paths A–E).
 
 == .env KEYS ==
   ETH_TELEGRAM_BOT_TOKEN  — Telegram bot token (dedicated ETH bot from BotFather)
@@ -63,7 +71,7 @@ _kz_env = os.environ.get("ETH_KZ_HOURS", "")
 if _kz_env:
     KZ_HOURS: list[int] = [int(h.strip()) for h in _kz_env.split(",") if h.strip()]
 else:
-    KZ_HOURS = [2, 6, 10]
+    KZ_HOURS = [2, 5, 6, 10, 14, 15]
 
 # ── Risk & position sizing ─────────────────────────────────────────────────────
 # Same ADX-split logic as BTC Bot 2 — validated on crypto in general.
