@@ -80,6 +80,31 @@ FINAL_SLOTS = [
     # macd_adx[15] DROPPED by S4
 ]
 
+# ---------------------------------------------------------------------------
+# COMPLEMENT LEG (regime_complement.py finding)
+# ---------------------------------------------------------------------------
+# The "anti-correlated hedge" idea failed -- NOTHING in the data is negatively
+# correlated with S4 (everything is +corr; in chop, mean-reversion bleeds too).
+# BUT specific engulfing/pin_bar HOUR-slots are net-positive standalone AND
+# stay positive INSIDE S4's losing months (badTotR > 0). They are an additive
+# diversifier, not a hedge. Each entry below: standalone AvgR / bad-month TotR.
+#   set ADD_COMPLEMENT = False to reproduce the pure-S4 baseline for comparison.
+ADD_COMPLEMENT = True
+COMPLEMENT_SLOTS = [
+    ("engulfing", 16, False),  # +0.48 / +23.6  (best)
+    ("engulfing",  1, False),  # +0.20 / +20.5
+    ("pin_bar",    2, False),  # +0.36 / +19.6
+    ("engulfing",  8, False),  # +0.11 / +14.4
+    ("engulfing",  2, False),  # +0.41 / +13.4
+    ("engulfing",  5, False),  # +0.19 / +11.3
+    ("pin_bar",   19, False),  # +0.32 / +7.5
+    ("pin_bar",   13, False),  # +0.10 / +6.8
+    ("pin_bar",   11, False),  # +0.42 / +5.0
+]
+
+if ADD_COMPLEMENT:
+    FINAL_SLOTS = FINAL_SLOTS + COMPLEMENT_SLOTS
+
 
 # -- Helpers -------------------------------------------------------------------
 
@@ -201,6 +226,11 @@ def main() -> None:
     print("  ETH BOT -- COMPOUND P&L SIMULATION (S4 OPTIMISED, %d+)" % START_YEAR)
     print(f"  Slots  : rsi_50[02] | ema_cross[05] | macd_adx[06] | rsi_50[07]")
     print(f"         : rsi_ema[10] | keltner[14] | ema_cross[14] | keltner[15]")
+    if ADD_COMPLEMENT:
+        print(f"  +Compl : engulfing[01/02/05/08/16] | pin_bar[02/11/13/19]  "
+              f"({len(COMPLEMENT_SLOTS)} MR slots)")
+    else:
+        print(f"  +Compl : OFF  (pure S4 baseline)")
     print(f"  Risk   : 2% ADX<=25 | 3% ADX 25-40 | 5% ADX>=40  (Config D)")
     print(f"  S4     : Oct risk x{OCT_RISK_FACTOR} | circuit breaker {CB_THRESHOLD*100:.0f}% monthly")
     print(f"  Capital: ${STARTING_BALANCE:,.2f}  |  TP1=2R / TP2=4R")
