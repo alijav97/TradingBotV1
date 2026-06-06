@@ -168,15 +168,19 @@ def main() -> None:
     print(f"  Beat: pure-S4 ${14165:,} / -30.0% / CL7   |   un-broken S4+9 $943,368 / -42.2% / CL16")
     print(_bar("="))
 
-    # configs to test
-    configs = [("none", 0.0, 1.0, "BASELINE (monthly CB only)")]
-    for trig in (0.12, 0.15, 0.20, 0.25):
-        for fac in (0.50, 0.25):
-            configs.append(("step", trig, fac,
-                            f"STEP  dd>={int(trig*100)}% -> risk x{fac:g}"))
-    for trig in (0.12, 0.15, 0.20):
-        configs.append(("halt", trig, 1.0,
-                        f"HALT  dd>={int(trig*100)}% -> stop month"))
+    # REFINE: zoom into the knee between dd 12-15% at the winning x0.25 factor,
+    # plus factor sensitivity (x0.20 / x0.30) at the 15% trigger.
+    configs = [
+        ("none", 0.0, 1.0, "BASELINE (monthly CB only)"),
+        ("step", 0.12, 0.25, "STEP  dd>=12% -> risk x0.25  (anchor)"),
+        ("step", 0.15, 0.25, "STEP  dd>=15% -> risk x0.25  (anchor)"),
+    ]
+    for trig in (0.13, 0.14, 0.15, 0.16, 0.17):
+        configs.append(("step", trig, 0.25,
+                        f"STEP  dd>={int(trig*100)}% -> risk x0.25"))
+    for fac in (0.20, 0.30):
+        configs.append(("step", 0.15, fac,
+                        f"STEP  dd>=15% -> risk x{fac:g}  (factor test)"))
 
     print(f"  {'config':<34} {'finalBal':>12} {'CAGR%':>8} "
           f"{'MaxDD%':>8} {'MaxCL':>6} {'skip':>5}")
