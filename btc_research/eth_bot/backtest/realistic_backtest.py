@@ -14,8 +14,8 @@ This script simulates the REAL constraint:
   * a trade is TAKEN only if no position is currently open
     (entry_time >= the last taken trade's exit_time)
   * otherwise the signal is missed (position busy), exactly like live
-  * risk: Config D (2/3/5%), Oct x0.5, monthly -10% CB, equity throttle x0.20
-    when >=15% below peak
+  * risk: Tier B (3/4/6%), Oct x0.5, monthly -10% CB, equity throttle x0.50
+    when >=25% below peak (the locked live config — see settings.py)
 
 It compares slot sets (pure S4 vs S4+complement) under this rule, then prints a
 month-by-month table for each. THIS is the number that reflects live behaviour.
@@ -39,9 +39,9 @@ STARTING_BALANCE = 500.0
 START_YEAR       = 2023
 OCT_RISK_FACTOR  = 0.5
 CB_THRESHOLD     = -0.10
-RISK_EARLY, RISK_TRANS, RISK_STRONG = 0.020, 0.030, 0.050  # Config D
-DD_THROTTLE_TRIGGER = -0.15
-DD_THROTTLE_FACTOR  = 0.20
+RISK_EARLY, RISK_TRANS, RISK_STRONG = 0.030, 0.040, 0.060  # Tier B (locked live)
+DD_THROTTLE_TRIGGER = -0.25
+DD_THROTTLE_FACTOR  = 0.50
 
 # -- Slot sets -----------------------------------------------------------------
 S4_SLOTS = [
@@ -194,7 +194,7 @@ def main() -> None:
     print(_bar("="))
     print(f"  ETH BOT -- REALISTIC ONE-POSITION BACKTEST  ({START_YEAR}+)")
     print(f"  ONE ETH trade at a time (live one-trade rule). Start ${STARTING_BALANCE:.0f}.")
-    print(f"  Config D 2/3/5% | Oct x0.5 | monthly CB -10% | throttle x0.2 @ -15% peak")
+    print(f"  Tier B 3/4/6% | Oct x0.5 | monthly CB -10% | throttle x0.5 @ -25% peak")
     print(_bar("="))
     print(f"  {'slot set':<20} {'taken':>6} {'missed':>7} {'WR%':>6} {'TotR':>7} "
           f"{'finalBal':>11} {'CAGR%':>8} {'MaxDD%':>8} {'MaxCL':>6}")

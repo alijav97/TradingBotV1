@@ -39,6 +39,7 @@ from btc_research.eth_bot.settings import (
     RISK_PCT_EARLY_TREND, RISK_PCT_TRANSITION, RISK_PCT_STRONG,
     TP1_RR, TP2_RR,
     OCT_RISK_FACTOR, CB_MONTHLY_DD_LIMIT,
+    THROTTLE_DD_TRIGGER, THROTTLE_FACTOR,
     SYMBOL,
 )
 from btc_research.eth_bot.strategy.eth_combined import ETHStrategy, get_risk_pct
@@ -194,6 +195,13 @@ class ETHSignalEngine:
             risk_pct *= OCT_RISK_FACTOR
             logger.info("  October risk cut applied: risk_pct -> %.1f%%", risk_pct * 100)
         balance   = self._get_balance()
+        # Equity throttle — cut risk while >25% below the all-time peak (Tier B brake)
+        if self._equity_throttled(balance):
+            risk_pct *= THROTTLE_FACTOR
+            logger.warning(
+                "  Equity throttle engaged (>= %.0f%% below peak): risk_pct -> %.1f%%",
+                abs(THROTTLE_DD_TRIGGER) * 100, risk_pct * 100,
+            )
         risk_usd  = balance * risk_pct
 
         entry_px  = float(result["entry"])
@@ -306,6 +314,26 @@ class ETHSignalEngine:
             return False
         except Exception as exc:
             logger.debug("circuit breaker check failed (allowing trade): %s", exc)
+            return False
+
+    def _equity_throttled(self, balance: float) -> bool:
+        """
+        Equity throttle (high-water-mark drawdown brake).
+
+        Returns True when the compounded balance is THROTTLE_DD_TRIGGER or more
+        below its all-time peak, in which case risk-per-trade is multiplied by
+        THROTTLE_FACTOR. Mirrors the peak/throttle logic in realistic_risk_sweep.py.
+        Disabled when THROTTLE_FACTOR >= 1.0.
+        """
+        if THROTTLE_FACTOR >= 1.0:
+            return False
+        try:
+            peak = self._journal.get_peak_balance()
+            if peak <= 0:
+                return False
+            return (balance - peak) / peak <= THROTTLE_DD_TRIGGER
+        except Exception as exc:
+            logger.debug("equity throttle check failed (full size): %s", exc)
             return False
 
     def _get_balance(self) -> float:

@@ -87,14 +87,18 @@ STARTING_BALANCE      = 500.0   # USD paper trading account
 #   ADX 25-40: sweet spot  (WR=47-60%, AvgR=+0.87-1.64) → normal risk
 #   ADX ≥ 40:  strong trend (WR=60%, AvgR=+0.62) → risk MORE
 # Config D outperformed all alternatives: CAGR +37.9% vs BTC-style +28.7%
-RISK_PCT_EARLY_TREND  = 0.02    # 2% — ADX ≤ 25 (early trend, weakest quality zone)
-RISK_PCT_TRANSITION   = 0.03    # 3% — ADX 25-40 (sweet spot — best WR/AvgR bucket)
-RISK_PCT_STRONG       = 0.05    # 5% — ADX ≥ 40 (strong trend, high conviction)
-                                 # 5% on $500 = $25 at risk, scales up with balance
+# Tier B sizing (realistic_risk_sweep, TP1-fixed one-position sim): the 3/4/6
+# profile + deep -25% throttle realised ~$71k from $500 at MaxDD -31.5% / MaxCL 8,
+# comfortably inside the hard limits (CL < 16, DD > -42%). Sized up from the old
+# 2/3/5 after the TP1 50/50 fix showed spare risk budget (corrected DD only -21.6%).
+RISK_PCT_EARLY_TREND  = 0.03    # 3% — ADX ≤ 25 (early trend, weakest quality zone)
+RISK_PCT_TRANSITION   = 0.04    # 4% — ADX 25-40 (sweet spot — best WR/AvgR bucket)
+RISK_PCT_STRONG       = 0.06    # 6% — ADX ≥ 40 (strong trend, high conviction)
+                                 # 6% on $500 = $30 at risk, scales up with balance
 
-ADX_SPLIT_EARLY_MAX   = 25      # ADX ≤ 25  → early trend  → 2% risk (weakest bucket)
-ADX_SPLIT_STRONG_MIN  = 40      # ADX ≥ 40  → strong trend → 5% risk (high conviction)
-                                 # ADX 25-40 → sweet spot   → 3% risk (best WR/AvgR)
+ADX_SPLIT_EARLY_MAX   = 25      # ADX ≤ 25  → early trend  → 3% risk (weakest bucket)
+ADX_SPLIT_STRONG_MIN  = 40      # ADX ≥ 40  → strong trend → 6% risk (high conviction)
+                                 # ADX 25-40 → sweet spot   → 4% risk (best WR/AvgR)
 
 # ── S4 risk overlays (validated by backtest_optimised.py) ──────────────────────
 # October seasonality: October is the only month with a negative average return
@@ -104,6 +108,16 @@ OCT_RISK_FACTOR       = 0.5     # multiply risk_pct by this in October (month ==
 # this level, halt all new entries for the rest of that month. Kills the 2026
 # 8-loss cluster; MaxDD -33.5% -> -30.0%, MaxCL 8 -> 7.
 CB_MONTHLY_DD_LIMIT   = -0.10   # -10% realised month drawdown -> stop new trades
+
+# Equity throttle (high-water-mark drawdown brake on position sizing):
+# when the compounded balance is THROTTLE_DD_TRIGGER below its all-time peak,
+# multiply risk-per-trade by THROTTLE_FACTOR until a new peak is made. A DEEP
+# -25% trigger almost never fires (max DD on the chosen Tier B path is -31.5%),
+# so it does NOT slow normal recovery — it only halves size in a catastrophic,
+# worse-than-backtest streak, preserving headroom to the -42% hard limit.
+# Set THROTTLE_FACTOR = 1.0 to disable the brake entirely.
+THROTTLE_DD_TRIGGER   = -0.25   # balance <= 25% below peak -> throttle engages
+THROTTLE_FACTOR       = 0.50    # cut risk-per-trade to 50% while throttled
 
 # Per-strategy ADX minimum (overrides global ADX_THRESHOLD for specific strategies):
 # rsi_ema at H10 collapses at ADX 20-25 (WR=41.7%, AvgR=+0.070, PF=1.12 — near random).
