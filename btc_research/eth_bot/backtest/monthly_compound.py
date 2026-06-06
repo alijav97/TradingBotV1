@@ -1,24 +1,29 @@
 """
 btc_research/eth_bot/backtest/monthly_compound.py
 
-Full compound P&L simulation for the FINAL 8-slot ETH Bot strategy set.
+Full compound P&L simulation for the S4-OPTIMISED ETH Bot strategy set.
 
-FINAL STRATEGY SET (MaxDD-gated expansion, CAGR~+168%, 5yr $500->$69k):
-  UTC 02  rsi_50        WR=50.0%  AvgR=+0.786  BTC-aligned  (baseline)
-  UTC 05  ema_cross     WR=52.4%  AvgR=+0.787  no BTC req   Asia Morning
-  UTC 06  macd_adx      WR=45.0%  AvgR=+0.660  BTC-aligned  (baseline)
-  UTC 10  rsi_ema       WR=48.1%  AvgR=+0.706  BTC-aligned  (baseline, ADX>=25)
-  UTC 14  keltner       WR=48.3%  AvgR=+0.450  no BTC req   NY Pre-Open
-  UTC 14  ema_cross     WR=44.7%  AvgR=+0.430  no BTC req   NY Pre-Open fallback
-  UTC 15  keltner       WR=53.7%  AvgR=+0.492  no BTC req   NY Open (best slot)
-  UTC 15  macd_adx      WR=45.2%  AvgR=+0.774  no BTC req   NY Open fallback
+S4 STRATEGY SET (validated by backtest_optimised.py, CAGR~+170.5%, MaxDD -30%):
+  UTC 02  rsi_50        BTC-aligned  Asia Night        (baseline)
+  UTC 05  ema_cross     no BTC req   Asia Morning
+  UTC 06  macd_adx      BTC-aligned  EU Pre-Open       (baseline)
+  UTC 07  rsi_50        no BTC req   EU Open           <- S4 ADD (biggest CAGR lever)
+  UTC 10  rsi_ema       BTC-aligned  EU Mid (ADX>=25)  (baseline)
+  UTC 14  keltner       no BTC req   NY Pre-Open
+  UTC 14  ema_cross     no BTC req   NY Pre-Open fallback
+  UTC 15  keltner       no BTC req   NY Open (best slot)
+  (UTC 15 macd_adx      DROPPED by S4 -- net drag)
 
 Risk sizing (Config D - ADX-split, confirmed optimal):
   ADX <= 25  -> 2%  (early trend, weakest bucket)
   ADX 25-40  -> 3%  (sweet spot - best WR/AvgR)
   ADX >= 40  -> 5%  (strong trend, high conviction)
 
-Starting capital: $500
+S4 risk overlays:
+  - October risk x 0.5  (only month with negative avg return)
+  - Monthly circuit breaker: halt new entries once a month draws down -10%
+
+Scope: trades from START_YEAR (2023) onwards. Starting capital: $500
 
 OUTPUT SECTIONS:
   1. MONTHLY breakdown (full 6-year table with year subtotals)
@@ -45,6 +50,7 @@ TRADES_CSV    = DATA_DIR / "backtest_trades.csv"
 
 # -- Parameters ----------------------------------------------------------------
 STARTING_BALANCE = 500.0
+START_YEAR       = 2023    # scope: only trades from this year onwards
 
 # Config D ADX-split risk (confirmed best by 6yr ETH ADX sweep)
 ADX_SPLIT_EARLY_MAX  = 25
@@ -53,7 +59,11 @@ RISK_EARLY           = 0.02   # 2% -- ADX <= 25
 RISK_TRANSITION      = 0.03   # 3% -- ADX 25-40
 RISK_STRONG          = 0.05   # 5% -- ADX >= 40
 
-# Final 8-slot strategy set
+# S4 risk overlays
+OCT_RISK_FACTOR      = 0.5    # halve risk in October
+CB_THRESHOLD         = -0.10  # halt month after -10% realised drawdown
+
+# S4 8-slot strategy set
 # Format: (strategy_key, hour_utc, require_btc_aligned)
 # NOTE: rsi50_kz excluded -- fires on same bars as rsi_50 at H2 (double-count).
 FINAL_SLOTS = [
@@ -61,12 +71,13 @@ FINAL_SLOTS = [
     ("rsi_50",   2,  True),    # Asia Night   - RSI 50-cross
     ("macd_adx", 6,  True),    # EU Pre-Open  - MACD+ADX
     ("rsi_ema",  10, True),    # EU Mid       - RSI+EMA (ADX>=25 in live bot)
-    # Expansion 5 slots (no BTC filter)
+    # Expansion + S4 (no BTC filter)
     ("ema_cross",  5,  False),  # Asia Morning - EMA 9/21 cross
+    ("rsi_50",     7,  False),  # EU Open      - RSI 50-cross (S4 ADD)
     ("keltner",   14,  False),  # NY Pre-Open  - Keltner breakout
     ("ema_cross", 14,  False),  # NY Pre-Open  - EMA cross (Keltner fallback)
     ("keltner",   15,  False),  # NY Open      - Keltner breakout (best slot)
-    ("macd_adx",  15,  False),  # NY Open      - MACD+ADX (Keltner fallback)
+    # macd_adx[15] DROPPED by S4
 ]
 
 
@@ -96,6 +107,12 @@ def main() -> None:
 
     df = pd.read_csv(TRADES_CSV, parse_dates=["entry_time"])
 
+    # -- Scope to START_YEAR onwards -------------------------------------------
+    df = df[df["entry_time"].dt.year >= START_YEAR].reset_index(drop=True)
+    if df.empty:
+        print(f"ERROR: No trades from {START_YEAR} onwards in {TRADES_CSV.name}")
+        sys.exit(1)
+
     # -- Filter final-slot trades ----------------------------------------------
     mask = pd.Series(False, index=df.index)
     for strat, hour, btc_req in FINAL_SLOTS:
@@ -110,14 +127,38 @@ def main() -> None:
         print("ERROR: No matching trades found -- check strategy names in CSV")
         sys.exit(1)
 
-    # -- Compound simulation ---------------------------------------------------
+    # -- Compound simulation (with S4 October cut + circuit breaker) -----------
     balance = STARTING_BALANCE
     records = []
 
+    cur_month       = None
+    month_start_bal = balance
+    month_halted    = False
+    n_halted        = 0   # trades skipped by the circuit breaker
+
     for _, t in ok.iterrows():
+        et        = t["entry_time"]
+        month_key = (et.year, et.month)
+
+        # New month -> reset circuit-breaker state
+        if month_key != cur_month:
+            cur_month       = month_key
+            month_start_bal = balance
+            month_halted    = False
+
+        # Circuit breaker: skip remaining trades this month
+        if month_halted:
+            n_halted += 1
+            continue
+
         adx      = float(t["adx"])
         r_val    = float(t["r_achieved"])
         rp       = _risk_pct(adx)
+
+        # October risk reduction
+        if et.month == 10:
+            rp *= OCT_RISK_FACTOR
+
         risk_usd = balance * rp
         pnl_usd  = risk_usd * r_val
         balance += pnl_usd
@@ -136,6 +177,11 @@ def main() -> None:
             "balance":    round(balance, 2),
         })
 
+        # Update circuit breaker after the trade
+        mo_pct = (balance - month_start_bal) / month_start_bal
+        if mo_pct <= CB_THRESHOLD:
+            month_halted = True
+
     sim = pd.DataFrame(records)
     sim["month"] = sim["entry_time"].dt.to_period("M")
     sim["year"]  = sim["entry_time"].dt.year
@@ -152,10 +198,11 @@ def main() -> None:
     # ==========================================================================
     print()
     print(_bar("="))
-    print("  ETH BOT -- FULL COMPOUND P&L SIMULATION (8-SLOT FINAL STRATEGY)")
-    print(f"  Slots  : rsi_50[02] | ema_cross[05] | macd_adx[06] | rsi_ema[10]")
-    print(f"         : keltner[14] | ema_cross[14] | keltner[15] | macd_adx[15]")
+    print("  ETH BOT -- COMPOUND P&L SIMULATION (S4 OPTIMISED, %d+)" % START_YEAR)
+    print(f"  Slots  : rsi_50[02] | ema_cross[05] | macd_adx[06] | rsi_50[07]")
+    print(f"         : rsi_ema[10] | keltner[14] | ema_cross[14] | keltner[15]")
     print(f"  Risk   : 2% ADX<=25 | 3% ADX 25-40 | 5% ADX>=40  (Config D)")
+    print(f"  S4     : Oct risk x{OCT_RISK_FACTOR} | circuit breaker {CB_THRESHOLD*100:.0f}% monthly")
     print(f"  Capital: ${STARTING_BALANCE:,.2f}  |  TP1=2R / TP2=4R")
     print(f"  Period : {sim['entry_time'].min().strftime('%Y-%m')} -> "
           f"{sim['entry_time'].max().strftime('%Y-%m')}  "
@@ -380,6 +427,7 @@ def main() -> None:
     print(f"  Backtest period     : {n_years:.1f} years")
     print(f"  Active months       : {active_months}")
     print(f"  Avg trades / month  : {len(sim) / active_months:.1f}")
+    print(f"  Trades skipped (CB) : {n_halted}  (monthly circuit breaker)")
     print(_bar())
     print(f"  Max drawdown        : {max_dd:.1f}%  (at {max_dd_date})")
     print(f"  Max consecutive L's : {max_cons_loss}")

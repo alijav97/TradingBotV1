@@ -24,16 +24,16 @@ Confirmed by 6-year ETH backtest (25 strategies × all hours, MaxDD-gated expans
            14 UTC  (NY Pre-Open):       EMA 9/21 cross [fallback after Keltner check]
     WR=44.7%  AvgR=+0.430  PF=1.78  N=38
 
-== HOUR ROUTING ==
+== HOUR ROUTING (S4 optimised) ==
   H02 → Path A (RSI 50-cross)
   H05 → Path E (EMA 9/21 cross — Asia Morning, standalone)
   H06 → Path B (MACD+ADX)
+  H07 → Path A (RSI 50-cross)   ← S4 ADD (biggest CAGR lever, +135.9%→+170.5%)
   H10 → Path C (RSI+EMA Stack, ADX≥25 gate)
   H14 → Path D first (Keltner), fallback Path E (EMA cross) if Keltner doesn't fire
-  H15 → Path D first (Keltner), fallback Path B (MACD+ADX) if Keltner doesn't fire
+  H15 → Path D only (Keltner)   ← S4 DROPPED the MACD+ADX fallback (net drag)
 
-  BTC alignment: Signal engine checks BTC EMA200 direction before calling generate_signal().
-  KZ_HOURS = [2, 5, 6, 10, 14, 15] — set in settings.py.
+  KZ_HOURS = [2, 5, 6, 7, 10, 14, 15] — set in settings.py.
 
 == RISK SIZING (Config D — confirmed optimal by 6yr ETH ADX sweep) ==
   ADX ≤ 25  → 2%  (early/weak trend — WR 45%, AvgR +0.34 → bet light)
@@ -45,10 +45,13 @@ Confirmed by 6-year ETH backtest (25 strategies × all hours, MaxDD-gated expans
   TP2 = 4R  (close remainder)
   Trailing SL = price ± 2×ATR after TP1
 
-== COMPOUND PROJECTION ==
-  8-slot portfolio (3 base + 5 expansion):
-    CAGR ≈ +168%  |  5yr from $500 ≈ $69,255  |  MaxDD ≈ −33.5%
-    Trades ≈ 4.9/month (up from 1.3 baseline)
+== COMPOUND PROJECTION (S4 optimised, validated on real trades) ==
+  8-slot portfolio (drop macd_adx[15], add rsi_50[07], + Oct cut + circuit breaker):
+    CAGR ≈ +170.5%  |  5yr from $500 ≈ $72,429  |  MaxDD ≈ −30.0%  |  MaxCL 7
+    Trades ≈ 5.1/month
+  Risk overlays (applied in signal_engine, not here):
+    - October: risk × OCT_RISK_FACTOR (0.5)
+    - Circuit breaker: halt new entries once month realised DD ≤ CB_MONTHLY_DD_LIMIT
 """
 from __future__ import annotations
 
@@ -84,14 +87,14 @@ _KELT_ATR_MULT   = 2.0
 _KELT_SL_MIN_ATR = 0.3
 _KELT_SL_MAX_ATR = 3.5
 
-# Session routing (stays in sync with settings.KZ_HOURS = [2, 5, 6, 10, 14, 15])
-_PATH_A_HOURS = frozenset({2})       # RSI 50-Cross            (Asia Night)
+# Session routing (stays in sync with settings.KZ_HOURS = [2, 5, 6, 7, 10, 14, 15])
+_PATH_A_HOURS = frozenset({2, 7})    # RSI 50-Cross   (Asia Night H02 + S4 add H07)
 _PATH_B_HOURS = frozenset({6})       # MACD+ADX primary        (EU Pre-Open)
 _PATH_C_HOURS = frozenset({10})      # RSI+EMA Stack           (EU Mid-Session)
 _PATH_D_HOURS = frozenset({14, 15})  # Keltner fresh breakout  (NY Pre/Open)
 _PATH_E_HOURS = frozenset({5})       # EMA 9/21 cross standalone (Asia Morning)
 # H14: Keltner primary → EMA cross fallback
-# H15: Keltner primary → MACD+ADX fallback
+# H15: Keltner ONLY (S4 dropped the MACD+ADX fallback — it was a net drag)
 
 
 # ── Public helper ──────────────────────────────────────────────────────────────
@@ -214,16 +217,17 @@ class ETHStrategy(BTCStrategy):
     """
 
     name = (
-        "ETH: RSI50[02] | EMAxEMA[05] | MACD+ADX[06] | RSI+EMA[10] | "
-        "Keltner[14/15] | MACD+ADX[15]"
+        "ETH-S4: RSI50[02/07] | EMAxEMA[05] | MACD+ADX[06] | RSI+EMA[10] | "
+        "Keltner[14/15]"
     )
     description = (
         "02 UTC: RSI14 50-cross | "
         "05 UTC: EMA9/21 cross | "
         "06 UTC: MACD+ADX≥25 | "
+        "07 UTC: RSI14 50-cross (S4 add) | "
         "10 UTC: RSI50+EMA stack (ADX≥25) | "
         "14 UTC: Keltner breakout → EMA cross fallback | "
-        "15 UTC: Keltner breakout → MACD+ADX fallback"
+        "15 UTC: Keltner breakout (S4 dropped MACD fallback)"
     )
 
     def __init__(self) -> None:
@@ -264,7 +268,7 @@ class ETHStrategy(BTCStrategy):
         is_long = direction == "long"
 
         if hour in _PATH_A_HOURS:
-            # H02 — RSI 50-cross
+            # H02 + H07 — RSI 50-cross (H07 added by S4 optimisation)
             return self._path_a_rsi50(df_window, is_long, base)
 
         elif hour in _PATH_E_HOURS:
@@ -287,11 +291,8 @@ class ETHStrategy(BTCStrategy):
             return self._path_e_ema_cross(df_window, is_long, base)
 
         elif hour == 15:
-            # H15 — Keltner primary → MACD+ADX fallback
-            sig = self._path_d_keltner(df_window, is_long, dict(base))
-            if sig["signal"]:
-                return sig
-            return self._path_b_macd_adx(df_window, is_long, base)
+            # H15 — Keltner ONLY (S4 dropped the MACD+ADX fallback)
+            return self._path_d_keltner(df_window, is_long, base)
 
         else:
             base["reason"] = (
@@ -693,9 +694,9 @@ class ETHStrategy(BTCStrategy):
             "RSI50-Cross      (02 UTC — Asia Night)",
             "EMA-Cross-9/21   (05 UTC — Asia Morning)",
             "MACD+ADX         (06 UTC — EU Pre-Open)",
+            "RSI50-Cross      (07 UTC — Asia/EU, S4 add)",
             "RSI+EMA Stack    (10 UTC — EU Mid-Session, ADX≥25)",
             "Keltner-Breakout (14 UTC — NY Pre-Open, primary)",
             "EMA-Cross-9/21   (14 UTC — NY Pre-Open, Keltner fallback)",
-            "Keltner-Breakout (15 UTC — NY Open, primary)",
-            "MACD+ADX         (15 UTC — NY Open, Keltner fallback)",
+            "Keltner-Breakout (15 UTC — NY Open, Keltner only)",
         ]

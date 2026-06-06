@@ -38,6 +38,7 @@ from btc_research.eth_bot.settings import (
     ADX_SPLIT_EARLY_MAX, ADX_SPLIT_STRONG_MIN,
     RISK_PCT_EARLY_TREND, RISK_PCT_TRANSITION, RISK_PCT_STRONG,
     TP1_RR, TP2_RR,
+    OCT_RISK_FACTOR, CB_MONTHLY_DD_LIMIT,
     SYMBOL,
 )
 from btc_research.eth_bot.strategy.eth_combined import ETHStrategy, get_risk_pct
@@ -134,6 +135,14 @@ class ETHSignalEngine:
             logger.debug("scan() called outside KZ hours (hr=%d) — skip", now.hour)
             return None
 
+        # ── S4 monthly circuit breaker ─────────────────────────────────────────
+        # Halt all new entries for the rest of a month once its realised return
+        # has drawn down to CB_MONTHLY_DD_LIMIT (default -10%).
+        if self._month_circuit_broken():
+            logger.info("  → SKIP: monthly circuit breaker active (month DD <= %.0f%%)",
+                        CB_MONTHLY_DD_LIMIT * 100)
+            return None
+
         # ── Fetch OHLCV ───────────────────────────────────────────────────────
         try:
             df = self._feed.get_ohlcv(_ETH_SYMBOL, _TIMEFRAME, _BAR_COUNT)
@@ -180,6 +189,10 @@ class ETHSignalEngine:
 
         # ── Risk sizing ───────────────────────────────────────────────────────
         risk_pct  = get_risk_pct(adx)
+        # S4 October seasonality cut — halve risk in October (only negative month)
+        if now.month == 10:
+            risk_pct *= OCT_RISK_FACTOR
+            logger.info("  October risk cut applied: risk_pct -> %.1f%%", risk_pct * 100)
         balance   = self._get_balance()
         risk_usd  = balance * risk_pct
 
@@ -212,15 +225,17 @@ class ETHSignalEngine:
         strategy_name = result.get("strategy_used", "ETH Strategy")
         entry_type    = result.get("entry_type", "")
 
-        # Determine session label (KZ_HOURS = [2, 6, 10])
-        if now.hour == 2:
-            session = "Asia Night"
-        elif now.hour == 6:
-            session = "EU Pre-Open"
-        elif now.hour == 10:
-            session = "EU Mid-Session"
-        else:
-            session = f"UTC {now.hour:02d}:xx"
+        # Determine session label (KZ_HOURS = [2, 5, 6, 7, 10, 14, 15])
+        _SESSION_LABELS = {
+            2:  "Asia Night",
+            5:  "Asia Morning",
+            6:  "EU Pre-Open",
+            7:  "EU Open",
+            10: "EU Mid-Session",
+            14: "NY Pre-Open",
+            15: "NY Open",
+        }
+        session = _SESSION_LABELS.get(now.hour, f"UTC {now.hour:02d}:xx")
 
         signal = {
             "symbol":       SYMBOL,          # "ETHUSD"
@@ -261,6 +276,37 @@ class ETHSignalEngine:
         return signal
 
     # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _month_circuit_broken(self) -> bool:
+        """
+        S4 monthly circuit breaker.
+
+        Returns True if the current calendar month's REALISED return has drawn
+        down to CB_MONTHLY_DD_LIMIT or worse, in which case no new entries are
+        taken for the rest of the month.
+
+        month_dd = month_realised_pnl / month_start_balance
+        month_start_balance = current_balance - month_realised_pnl
+        """
+        try:
+            month_pnl = self._journal.get_current_month_pnl()
+            if month_pnl >= 0:
+                return False  # up or flat on the month — never halt
+            cur_bal   = self._get_balance()
+            month_start = cur_bal - month_pnl
+            if month_start <= 0:
+                return False
+            month_dd = month_pnl / month_start
+            if month_dd <= CB_MONTHLY_DD_LIMIT:
+                logger.warning(
+                    "Circuit breaker: month DD %.1f%% (pnl=%.2f, start=%.2f) <= limit %.0f%%",
+                    month_dd * 100, month_pnl, month_start, CB_MONTHLY_DD_LIMIT * 100,
+                )
+                return True
+            return False
+        except Exception as exc:
+            logger.debug("circuit breaker check failed (allowing trade): %s", exc)
+            return False
 
     def _get_balance(self) -> float:
         """Return current account balance from journal, falling back to STARTING_BALANCE."""

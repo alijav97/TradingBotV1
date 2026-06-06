@@ -3,21 +3,26 @@ btc_research/eth_bot/settings.py — ETH Bot runtime configuration.
 
 Fully standalone — reads from .env, no dependency on any other bot's settings.
 
-== KILL-ZONE ==
-  KZ_HOURS = [2, 5, 6, 10, 14, 15] — expanded via MaxDD-gated analysis (cap = -35%).
+== KILL-ZONE (S4 optimised set) ==
+  KZ_HOURS = [2, 5, 6, 7, 10, 14, 15] — S4 config, validated against real trades.
 
-  BASELINE (BTC-aligned, original 3 slots):
+  BASELINE (original 3 slots):
     02 UTC → RSI 50-Cross            (Asia Night,    WR=50.0%, AvgR=+0.786)
     06 UTC → MACD+ADX                (EU Pre-Open,   WR=45.0%, AvgR=+0.660)
     10 UTC → RSI+EMA Stack           (EU Mid-Session,WR=48.1%, AvgR=+0.706)
 
-  EXPANSION (no BTC filter — 5 additional slots that kept MaxDD ≥ -35%):
+  EXPANSION + S4 OPTIMISATION:
     05 UTC → EMA Cross 9/21          (Asia Morning,  WR=52.4%, AvgR=+0.787) ★
+    07 UTC → RSI 50-Cross            (S4 ADD — biggest CAGR lever, 135.9%→170.5%)
     14 UTC → Keltner → EMA fallback  (NY Pre-Open,   WR=48.3%/44.7%)
-    15 UTC → Keltner → MACD fallback (NY Open,       WR=53.7%/45.2%) ★ best slot
+    15 UTC → Keltner ONLY            (NY Open, S4 DROPPED macd_adx fallback)
 
-  Portfolio result: CAGR≈+168% | 5yr $500→$69,255 | MaxDD=-33.5% | ~4.9 trades/mo
-  Override via ETH_KZ_HOURS in .env (comma-separated, e.g. "2,5,6,10,14,15").
+  S4 also applies two risk overlays (see OCT_RISK_FACTOR / CB_MONTHLY_DD_LIMIT):
+    - October risk × 0.5  (only month with negative avg return)
+    - Monthly circuit breaker: halt new entries once a month is down -10%
+
+  S4 backtest result: CAGR≈+170.5% | 5yr $500→$72,429 | MaxDD=-30.0% | ~5.1 trades/mo
+  Override via ETH_KZ_HOURS in .env (comma-separated, e.g. "2,5,6,7,10,14,15").
 
 == STRATEGY ==
   See eth_combined.py for all 5 paths and fallback routing (Paths A–E).
@@ -71,7 +76,7 @@ _kz_env = os.environ.get("ETH_KZ_HOURS", "")
 if _kz_env:
     KZ_HOURS: list[int] = [int(h.strip()) for h in _kz_env.split(",") if h.strip()]
 else:
-    KZ_HOURS = [2, 5, 6, 10, 14, 15]
+    KZ_HOURS = [2, 5, 6, 7, 10, 14, 15]   # S4 set (added H07 rsi_50)
 
 # ── Risk & position sizing ─────────────────────────────────────────────────────
 # Same ADX-split logic as BTC Bot 2 — validated on crypto in general.
@@ -90,6 +95,15 @@ RISK_PCT_STRONG       = 0.05    # 5% — ADX ≥ 40 (strong trend, high convicti
 ADX_SPLIT_EARLY_MAX   = 25      # ADX ≤ 25  → early trend  → 2% risk (weakest bucket)
 ADX_SPLIT_STRONG_MIN  = 40      # ADX ≥ 40  → strong trend → 5% risk (high conviction)
                                  # ADX 25-40 → sweet spot   → 3% risk (best WR/AvgR)
+
+# ── S4 risk overlays (validated by backtest_optimised.py) ──────────────────────
+# October seasonality: October is the only month with a negative average return
+# (-3.7%) across the 6-year sample -> halve risk for that month.
+OCT_RISK_FACTOR       = 0.5     # multiply risk_pct by this in October (month == 10)
+# Monthly circuit breaker: once a calendar month's REALISED return draws down to
+# this level, halt all new entries for the rest of that month. Kills the 2026
+# 8-loss cluster; MaxDD -33.5% -> -30.0%, MaxCL 8 -> 7.
+CB_MONTHLY_DD_LIMIT   = -0.10   # -10% realised month drawdown -> stop new trades
 
 # Per-strategy ADX minimum (overrides global ADX_THRESHOLD for specific strategies):
 # rsi_ema at H10 collapses at ADX 20-25 (WR=41.7%, AvgR=+0.070, PF=1.12 — near random).

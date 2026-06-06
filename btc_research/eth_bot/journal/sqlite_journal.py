@@ -358,6 +358,22 @@ class Journal:
             "profit_factor": round(pf, 2),
         }
 
+    def get_current_month_pnl(self) -> float:
+        """
+        Sum realised PnL of trades CLOSED in the current UTC calendar month.
+        Used by the signal engine's monthly circuit breaker. Excludes any
+        backtest-tagged rows (same filter as get_paper_balance).
+        """
+        month_prefix = datetime.now(timezone.utc).strftime("%Y-%m")
+        rows = self._conn.execute(
+            """SELECT pnl_usd FROM trades
+               WHERE status='CLOSED'
+               AND close_time LIKE ?
+               AND (notes IS NULL OR notes = '' OR notes NOT LIKE '%backtest%')""",
+            (f"{month_prefix}%",),
+        ).fetchall()
+        return round(sum((r["pnl_usd"] or 0.0) for r in rows), 2)
+
     def get_paper_balance(self) -> float:
         """
         Return current compounded paper balance.
