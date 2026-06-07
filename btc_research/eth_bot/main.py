@@ -52,7 +52,7 @@ except ImportError:
     pass
 
 # ── Logging setup (UTC timestamps) ────────────────────────────────────────────
-from btc_research.eth_bot.settings import DATA_DIR, LOG_DIR, API_PORT, KZ_HOURS, STARTING_BALANCE, DB_PATH
+from btc_research.eth_bot.settings import DATA_DIR, LOG_DIR, API_PORT, KZ_HOURS, STARTING_BALANCE, DB_PATH, RISK_PCT_STRONG
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 _LOG_FILE = LOG_DIR / "eth_bot.log"
@@ -117,9 +117,10 @@ def main() -> None:
 
     logger.info("=" * 60)
     logger.info("ETH Bot starting up")
-    logger.info("Kill-zone : %s UTC  (02=Asia Night | 06=EU Pre-Open | 10=EU Mid-Session)", kz_str)
-    logger.info("Strategy  : RSI50-Cross[02] | MACD+ADX[06] | RSI+EMA[10]  (6yr ETH backtest, BTC-aligned)")
-    logger.info("Risk      : 3%% ADX<=25 | 2%% ADX 25-40 | 3%% ADX>=40")
+    logger.info("Kill-zone : %s UTC  (01/02/03=Asia Night | 08=EU Open)", kz_str)
+    logger.info("Strategy  : VBSwing — SwingLevelV2 > VolatilityBreakout  (TP1 2R / TP2 5R)")
+    logger.info("Risk      : flat %.0f%% base | THROTTLE-2 (halve after 2 losses until a win)",
+                RISK_PCT_STRONG * 100)
     logger.info("Balance   : $%.0f starting", STARTING_BALANCE)
     logger.info("API port  : %d", API_PORT)
     logger.info("DB        : %s", DB_PATH)
