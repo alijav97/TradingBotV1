@@ -38,8 +38,10 @@ from pathlib import Path
 import pandas as pd
 
 # -- Paths ---------------------------------------------------------------------
-_DIR = Path(__file__).parent
-CSV  = _DIR / "data" / "backtest_trades.csv"
+_DIR     = Path(__file__).parent
+DATA_DIR = _DIR / "data"
+CSV      = DATA_DIR / "backtest_trades.csv"
+ETH_CSV  = DATA_DIR / "ETHUSD_H1.csv"
 
 # -- Forward window ------------------------------------------------------------
 FORWARD_START = pd.Timestamp("2026-01-01")
@@ -170,6 +172,80 @@ def _simulate_onepos(cand: pd.DataFrame) -> dict:
     }
 
 
+def _adx_series(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """ADX(period) full series — same formula as signal_engine/eth_combined."""
+    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
+    sp = 2 * period - 1
+    hd, ld = h.diff(), l.diff()
+    tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
+    pdm = hd.where((hd > 0) & (hd > -ld), 0.0)
+    mdm = (-ld).where((-ld > 0) & (-ld > hd), 0.0)
+    aw = tr.ewm(span=sp, adjust=False).mean()
+    pw = pdm.ewm(span=sp, adjust=False).mean()
+    mw = mdm.ewm(span=sp, adjust=False).mean()
+    pdi = 100 * pw / (aw + 1e-12)
+    ndi = 100 * mw / (aw + 1e-12)
+    dx = 100 * (pdi - ndi).abs() / (pdi + ndi + 1e-12)
+    return dx.ewm(span=sp, adjust=False).mean().fillna(0)
+
+
+def _diagnostics(window_trades: pd.DataFrame) -> None:
+    """Explain WHY the window performed as it did — regime, buy&hold, BTC-filter A/B.
+    Pure measurement, no parameter changes."""
+    print()
+    print(_bar("="))
+    print("  DIAGNOSTICS (measurement only — no tuning)")
+    print(_bar("="))
+
+    # 1. Buy & hold benchmark + trend-regime read (needs the ETH H1 price file)
+    if ETH_CSV.exists():
+        eth = pd.read_csv(ETH_CSV, parse_dates=["time"])
+        if eth["time"].dt.tz is not None:
+            eth["time"] = eth["time"].dt.tz_convert("UTC").dt.tz_localize(None)
+        # ADX over the FULL series, then slice (need history for the EWM warmup)
+        eth["adx14"] = _adx_series(eth, 14)
+        win = eth[(eth["time"] >= FORWARD_START) & (eth["time"] < FORWARD_END)].reset_index(drop=True)
+        if not win.empty:
+            first_c = float(win["close"].iloc[0]); last_c = float(win["close"].iloc[-1])
+            bh = (last_c / first_c - 1) * 100
+            hi = float(win["high"].max()); lo = float(win["low"].min())
+            adx = win["adx14"]
+            pct_trend = (adx >= 20).mean() * 100      # ADX>=20 = tradeable trend gate
+            pct_strong = (adx >= 40).mean() * 100
+            print(f"  ETH buy & hold  : {first_c:,.0f} -> {last_c:,.0f}  "
+                  f"({bh:+.1f}%)   range {lo:,.0f}-{hi:,.0f}")
+            print(f"  Trend regime    : ADX>=20 on {pct_trend:.0f}% of bars  "
+                  f"(strong ADX>=40 on {pct_strong:.0f}%)  | mean ADX {adx.mean():.1f}")
+            print(f"  => the bot only fires in trend (ADX>=20). Low % here = mostly chop = few/weak setups.")
+        else:
+            print("  (no ETH H1 bars in window — cannot compute buy&hold/regime)")
+    else:
+        print(f"  (ETHUSD_H1.csv not found — skip buy&hold/regime)")
+
+    # 2. ADX bucket of the trades we actually took (pure S4, filter on)
+    taken = _select(window_trades, S4_SLOTS)
+    if not taken.empty:
+        a = taken["adx"].astype(float)
+        nb = ((a > 25) & (a < 40)).sum()
+        print(f"  Taken-trade ADX : <=25 {(a<=25).sum()}  |  25-40 {nb}  |  >=40 {(a>=40).sum()}  "
+              f"(risk 3% / 4% / 6%)")
+
+    # 3. BTC-filter A/B — did the live filter I added help or hurt THIS window?
+    S4_NO_BTC = [(s, h, False) for (s, h, _) in S4_SLOTS]
+    on  = _simulate_onepos(_select(window_trades, S4_SLOTS))
+    off = _simulate_onepos(_select(window_trades, S4_NO_BTC))
+    print()
+    print(f"  BTC same-bar filter A/B (H02/H06/H10):")
+    print(f"    filter ON  (live) : {on['n_taken']:>3} trades  WR {on['wr']:>4.1f}%  "
+          f"TotR {on['tot_r']:>+5.1f}  final ${on['final']:>8,.2f}  ({on['ret_pct']:+.1f}%)")
+    print(f"    filter OFF        : {off['n_taken']:>3} trades  WR {off['wr']:>4.1f}%  "
+          f"TotR {off['tot_r']:>+5.1f}  final ${off['final']:>8,.2f}  ({off['ret_pct']:+.1f}%)")
+    verdict = ("filter HELPED" if on["final"] > off["final"]
+               else "filter HURT" if on["final"] < off["final"] else "no difference")
+    print(f"    => in this window the {verdict}.")
+    print(_bar("="))
+
+
 def _monthly(sim: pd.DataFrame) -> None:
     if sim.empty:
         print("  (no trades taken in window)")
@@ -242,6 +318,9 @@ def main() -> None:
         print(_bar())
         _monthly(r["sim"])
     print(_bar("="))
+
+    # WHY did the window behave this way?
+    _diagnostics(df)
     print()
 
 
