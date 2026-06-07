@@ -5,15 +5,15 @@ Scans ETHUSD H1 bars at kill-zone hours and returns a fully-enriched
 signal dict when a strategy fires.
 
 == FLOW ==
-  1. Check kill-zone gate — skip instantly outside KZ hours
+  1. Check kill-zone gate (VBSwing hours [1,2,3,8]) — skip outside KZ hours
   2. Fetch last 300 ETHUSD H1 bars from DataFeed (MT5)
   3. Compute EMA200, ADX(14), ATR(14) on the window
   4. EMA200 filter: only trade in the direction price is relative to EMA200
   5. ADX gate: skip if ADX < 20 (no clear trend)
-  6. Run ETHStrategy (SwingLevelV2 > VB) for the allowed direction
-  7. ADX-split risk: 3% ADX≤25, 2% ADX 25-40, 3% ADX≥40
+  6. Run VBSwingStrategy (SwingLevelV2 > VolatilityBreakout) for the allowed direction
+  7. Flat 8% base risk; THROTTLE-2: halve risk after 2 consecutive losses until a win
   8. Size: risk_usd = balance × risk_pct  |  eth_amount = risk_usd / sl_dist
-  9. Compute TP1, TP2 prices from the signal's TP1_RR and TP2_RR
+  9. Compute TP1 (2R), TP2 (5R) prices from the signal's TP1_RR / TP2_RR
 
 == USAGE ==
   from btc_research.eth_bot.signal_engine import ETHSignalEngine
@@ -38,11 +38,16 @@ from btc_research.eth_bot.settings import (
     ADX_SPLIT_EARLY_MAX, ADX_SPLIT_STRONG_MIN,
     RISK_PCT_EARLY_TREND, RISK_PCT_TRANSITION, RISK_PCT_STRONG,
     TP1_RR, TP2_RR,
-    OCT_RISK_FACTOR, CB_MONTHLY_DD_LIMIT,
+    OCT_RISK_FACTOR, MONTHLY_CB_ENABLED, CB_MONTHLY_DD_LIMIT,
     THROTTLE_DD_TRIGGER, THROTTLE_FACTOR,
+    THROTTLE2_LOSSES, THROTTLE2_FACTOR,
     SYMBOL,
 )
-from btc_research.eth_bot.strategy.eth_combined import ETHStrategy, get_risk_pct
+# VBSwing is the live strategy (ported BTC SwingLevelV2 > VolatilityBreakout).
+# get_risk_pct still comes from eth_combined; all ADX tiers are now flat 8%, so it
+# returns 0.08 regardless of ADX.
+from btc_research.btc_bot_2.strategy.vb_swing_combined import VBSwingStrategy
+from btc_research.eth_bot.strategy.eth_combined import get_risk_pct
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +57,11 @@ _TIMEFRAME  = "H1"
 _BAR_COUNT  = 300
 _MIN_BARS   = 220   # EMA200 needs at least 200 bars
 
-# Slots that the $70k backtest (realistic_backtest S4_SLOTS, btc_req=True) trades
-# ONLY when BTC is trending the same direction as the ETH signal. These map to:
-#   H02 → Path A (rsi_50)   H06 → Path B (macd_adx)   H10 → Path C (rsi_ema)
-# All other live hours (5, 7, 14, 15) are btc_req=False in the backtest, so they
-# are NOT gated. Keep this set in sync with the True flags in S4_SLOTS.
-_BTC_ALIGN_HOURS = frozenset({2, 6, 10})
+# BTC same-bar alignment gate — DISABLED for the VBSwing config (empty set = never
+# gates). The validated VBSwing backtest (eth_vbswing.py best config, BTC hours
+# [1,2,3,8]) does NOT use a live BTC-trend alignment filter; it trades the ETH signal
+# on its own EMA200/ADX gates. Leaving this empty keeps every VBSwing entry.
+_BTC_ALIGN_HOURS = frozenset()
 
 
 def _calc_adx(df: pd.DataFrame, period: int = 14) -> float:
@@ -117,7 +121,7 @@ class ETHSignalEngine:
     def __init__(self, feed: "DataFeed", journal: "Journal") -> None:
         self._feed    = feed
         self._journal = journal
-        self._strat   = ETHStrategy()
+        self._strat   = VBSwingStrategy()
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -144,10 +148,11 @@ class ETHSignalEngine:
             logger.debug("scan() called outside KZ hours (hr=%d) — skip", now.hour)
             return None
 
-        # ── S4 monthly circuit breaker ─────────────────────────────────────────
-        # Halt all new entries for the rest of a month once its realised return
-        # has drawn down to CB_MONTHLY_DD_LIMIT (default -10%).
-        if self._month_circuit_broken():
+        # ── Monthly circuit breaker (DISABLED for VBSwing) ─────────────────────
+        # A month-level hard halt forfeits the post-streak recovery winners that are
+        # VBSwing's edge (see eth_vbswing_cb.py). Gated off via MONTHLY_CB_ENABLED;
+        # damage control is handled by THROTTLE-2 in the sizing block instead.
+        if MONTHLY_CB_ENABLED and self._month_circuit_broken():
             logger.info("  → SKIP: monthly circuit breaker active (month DD <= %.0f%%)",
                         CB_MONTHLY_DD_LIMIT * 100)
             return None
@@ -208,13 +213,25 @@ class ETHSignalEngine:
             return None
 
         # ── Risk sizing ───────────────────────────────────────────────────────
+        # Flat 8% base (all ADX tiers equal in settings) — VBSwing FINAL DECISION.
         risk_pct  = get_risk_pct(adx)
-        # S4 October seasonality cut — halve risk in October (only negative month)
-        if now.month == 10:
+        # October cut (disabled for VBSwing: OCT_RISK_FACTOR = 1.0)
+        if now.month == 10 and OCT_RISK_FACTOR != 1.0:
             risk_pct *= OCT_RISK_FACTOR
             logger.info("  October risk cut applied: risk_pct -> %.1f%%", risk_pct * 100)
+        # THROTTLE-2 — after N consecutive losses, halve risk until the next win.
+        # The validated damage-control rule (eth_vbswing_final.py): softens the worst
+        # drawdowns while keeping every trade, incl. the post-streak recovery winner.
+        if THROTTLE2_FACTOR < 1.0:
+            consec = self._consecutive_losses()
+            if consec >= THROTTLE2_LOSSES:
+                risk_pct *= THROTTLE2_FACTOR
+                logger.warning(
+                    "  THROTTLE-2 engaged (%d consecutive losses >= %d): risk_pct -> %.1f%%",
+                    consec, THROTTLE2_LOSSES, risk_pct * 100,
+                )
         balance   = self._get_balance()
-        # Equity throttle — cut risk while >25% below the all-time peak (Tier B brake)
+        # Equity HWM throttle (disabled for VBSwing: THROTTLE_FACTOR = 1.0)
         if self._equity_throttled(balance):
             risk_pct *= THROTTLE_FACTOR
             logger.warning(
@@ -252,15 +269,12 @@ class ETHSignalEngine:
         strategy_name = result.get("strategy_used", "ETH Strategy")
         entry_type    = result.get("entry_type", "")
 
-        # Determine session label (KZ_HOURS = [2, 5, 6, 7, 10, 14, 15])
+        # Determine session label (VBSwing KZ_HOURS = [1, 2, 3, 8])
         _SESSION_LABELS = {
+            1:  "Asia Night",
             2:  "Asia Night",
-            5:  "Asia Morning",
-            6:  "EU Pre-Open",
-            7:  "EU Open",
-            10: "EU Mid-Session",
-            14: "NY Pre-Open",
-            15: "NY Open",
+            3:  "Asia Night",
+            8:  "EU Open",
         }
         session = _SESSION_LABELS.get(now.hour, f"UTC {now.hour:02d}:xx")
 
@@ -334,6 +348,17 @@ class ETHSignalEngine:
         except Exception as exc:
             logger.debug("circuit breaker check failed (allowing trade): %s", exc)
             return False
+
+    def _consecutive_losses(self) -> int:
+        """
+        Number of consecutive losing closed trades (most recent backwards), used by
+        the THROTTLE-2 brake. Reads the journal; on any error returns 0 (full size).
+        """
+        try:
+            return int(self._journal.get_consecutive_losses())
+        except Exception as exc:
+            logger.debug("consecutive-loss check failed (full size): %s", exc)
+            return 0
 
     def _equity_throttled(self, balance: float) -> bool:
         """

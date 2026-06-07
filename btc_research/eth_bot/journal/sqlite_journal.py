@@ -392,6 +392,31 @@ class Journal:
             balance = max(balance + pnl, 1.0)
         return round(balance, 2)
 
+    def get_consecutive_losses(self) -> int:
+        """
+        Count consecutive losing closed trades, walking backwards from the most
+        recent close. A trade counts as a loss when pnl_usd <= 0. Stops at the
+        first win.
+
+        Used by the signal engine's THROTTLE-2 brake: after N losses in a row,
+        risk-per-trade is halved until the next win (validated by the ETH VBSwing
+        circuit-breaker test — keeps every trade incl. the recovery winner, unlike
+        a hard pause). Excludes backtest-tagged rows (same filter as balance).
+        """
+        rows = self._conn.execute(
+            """SELECT pnl_usd FROM trades
+               WHERE status='CLOSED'
+               AND (notes IS NULL OR notes = '' OR notes NOT LIKE '%backtest%')
+               ORDER BY close_time DESC""",
+        ).fetchall()
+        streak = 0
+        for r in rows:
+            if (r["pnl_usd"] or 0.0) <= 0:
+                streak += 1
+            else:
+                break
+        return streak
+
     def get_peak_balance(self) -> float:
         """
         Return the all-time HIGH-WATER MARK of the compounded paper balance.

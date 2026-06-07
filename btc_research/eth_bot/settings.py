@@ -76,7 +76,10 @@ _kz_env = os.environ.get("ETH_KZ_HOURS", "")
 if _kz_env:
     KZ_HOURS: list[int] = [int(h.strip()) for h in _kz_env.split(",") if h.strip()]
 else:
-    KZ_HOURS = [2, 5, 6, 7, 10, 14, 15]   # S4 set (added H07 rsi_50)
+    # VBSwing config (eth_vbswing.py best config). The ported BTC VBSwing strategy
+    # is the first robust winner on ETH (TRAIN +0.81R / TEST +0.70R, not curve-fit),
+    # and its best hour set is the BTC Asia-Night + EU-open kill-zone.
+    KZ_HOURS = [1, 2, 3, 8]
 
 # ── Risk & position sizing ─────────────────────────────────────────────────────
 # Same ADX-split logic as BTC Bot 2 — validated on crypto in general.
@@ -91,33 +94,46 @@ STARTING_BALANCE      = 500.0   # USD paper trading account
 # profile + deep -25% throttle realised ~$71k from $500 at MaxDD -31.5% / MaxCL 8,
 # comfortably inside the hard limits (CL < 16, DD > -42%). Sized up from the old
 # 2/3/5 after the TP1 50/50 fix showed spare risk budget (corrected DD only -21.6%).
-RISK_PCT_EARLY_TREND  = 0.03    # 3% — ADX ≤ 25 (early trend, weakest quality zone)
-RISK_PCT_TRANSITION   = 0.04    # 4% — ADX 25-40 (sweet spot — best WR/AvgR bucket)
-RISK_PCT_STRONG       = 0.06    # 6% — ADX ≥ 40 (strong trend, high conviction)
-                                 # 6% on $500 = $30 at risk, scales up with balance
+# VBSwing FINAL DECISION: FLAT 8% base risk (no ADX split). The Monte Carlo over the
+# real VBSwing-on-ETH R-distribution (eth_vbswing_final.py) made the 6/8/10 choice on
+# the full upside/pain tradeoff: 8% gives ~35% P($10k)/6mo and ~87%/12mo at 0% ruin,
+# with a p95 worst-drawdown of ~58% — the chosen survivable middle path. All three
+# ADX tiers are set equal so get_risk_pct() returns a flat 8% regardless of ADX.
+RISK_PCT_EARLY_TREND  = 0.08    # 8% flat (ADX ≤ 25)
+RISK_PCT_TRANSITION   = 0.08    # 8% flat (ADX 25-40)
+RISK_PCT_STRONG       = 0.08    # 8% flat (ADX ≥ 40)
 
 ADX_SPLIT_EARLY_MAX   = 25      # ADX ≤ 25  → early trend  → 3% risk (weakest bucket)
 ADX_SPLIT_STRONG_MIN  = 40      # ADX ≥ 40  → strong trend → 6% risk (high conviction)
                                  # ADX 25-40 → sweet spot   → 4% risk (best WR/AvgR)
 
-# ── S4 risk overlays (validated by backtest_optimised.py) ──────────────────────
-# October seasonality: October is the only month with a negative average return
-# (-3.7%) across the 6-year sample -> halve risk for that month.
-OCT_RISK_FACTOR       = 0.5     # multiply risk_pct by this in October (month == 10)
-# Monthly circuit breaker: once a calendar month's REALISED return draws down to
-# this level, halt all new entries for the rest of that month. Kills the 2026
-# 8-loss cluster; MaxDD -33.5% -> -30.0%, MaxCL 8 -> 7.
-CB_MONTHLY_DD_LIMIT   = -0.10   # -10% realised month drawdown -> stop new trades
+# ── Risk overlays ──────────────────────────────────────────────────────────────
+# DISABLED for the VBSwing config. The eth_vbswing_cb.py circuit-breaker test showed
+# that "stop after losses" overlays HURT this strategy: its edge is the rare 5R
+# winners that arrive right after a losing streak, and any hard pause / monthly halt
+# skips exactly those recovery winners. The validated damage-control rule is the
+# consecutive-loss THROTTLE-2 below (halve risk after 2 losses, keep every trade).
 
-# Equity throttle (high-water-mark drawdown brake on position sizing):
-# when the compounded balance is THROTTLE_DD_TRIGGER below its all-time peak,
-# multiply risk-per-trade by THROTTLE_FACTOR until a new peak is made. A DEEP
-# -25% trigger almost never fires (max DD on the chosen Tier B path is -31.5%),
-# so it does NOT slow normal recovery — it only halves size in a catastrophic,
-# worse-than-backtest streak, preserving headroom to the -42% hard limit.
-# Set THROTTLE_FACTOR = 1.0 to disable the brake entirely.
-THROTTLE_DD_TRIGGER   = -0.25   # balance <= 25% below peak -> throttle engages
-THROTTLE_FACTOR       = 0.50    # cut risk-per-trade to 50% while throttled
+# October seasonality cut — was an S4 artifact; VBSwing's edge does not have it.
+OCT_RISK_FACTOR       = 1.0     # 1.0 = disabled (no October cut)
+
+# Monthly circuit breaker — DISABLED (set False). A month-level hard halt is the
+# "hard pause" the CB test rejected; it forfeits the post-streak recovery winners.
+MONTHLY_CB_ENABLED    = False
+CB_MONTHLY_DD_LIMIT   = -0.10   # unused while MONTHLY_CB_ENABLED is False
+
+# Equity HWM throttle — DISABLED (THROTTLE_FACTOR = 1.0 short-circuits it in
+# signal_engine._equity_throttled). Superseded by THROTTLE-2 (consecutive-loss based).
+THROTTLE_DD_TRIGGER   = -0.25   # unused while THROTTLE_FACTOR >= 1.0
+THROTTLE_FACTOR       = 1.0     # 1.0 = HWM throttle disabled
+
+# ── THROTTLE-2 (consecutive-loss brake — the chosen damage control) ─────────────
+# After THROTTLE2_LOSSES losing trades in a row, multiply risk-per-trade by
+# THROTTLE2_FACTOR until the next win. Validated by eth_vbswing_final.py: at 8% base
+# this softens the worst drawdowns while KEEPING every trade (the recovery winners
+# a hard pause would skip). Set THROTTLE2_FACTOR = 1.0 to disable.
+THROTTLE2_LOSSES      = 2       # halve risk after 2 consecutive losses
+THROTTLE2_FACTOR      = 0.50    # cut risk-per-trade to 50% until the next win
 
 # Per-strategy ADX minimum (overrides global ADX_THRESHOLD for specific strategies):
 # rsi_ema at H10 collapses at ADX 20-25 (WR=41.7%, AvgR=+0.070, PF=1.12 — near random).
@@ -126,10 +142,10 @@ RSI_EMA_ADX_MIN       = 25      # used by Path C (rsi_ema, hour 10) in eth_combi
 
 # ── TP / SL ratios ─────────────────────────────────────────────────────────────
 TP1_RR          = 2.0    # TP1 at 2R — partial close (50%), SL to breakeven
-TP2_RR          = 4.0    # TP2 at 4R — full close (remaining 50%)
-                          # Reduced from 5R: phase-1 backtest showed avg_r ~0.5R
-                          # across all strategies → very few trades reached 5R on ETH.
-                          # 4R materially increases hit rate while preserving 2:1 TP2/TP1 ratio.
+TP2_RR          = 5.0    # TP2 at 5R — full close (remaining 50%)
+                          # VBSwing standardises TP1=2R / TP2=5R (vb_swing_combined.py).
+                          # The +0.79R AvgR / PF 2.11 backtest edge is built on the rare
+                          # 5R runners — do NOT cut this to 4R for VBSwing.
 TRAIL_ATR_MULT  = 2.0    # Trailing SL after TP1: peak/trough ± 2×ATR
 MAX_HOLD_BARS   = 96     # 96 H1 bars = 4 days — force-close if still open
 
