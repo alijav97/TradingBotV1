@@ -44,6 +44,11 @@ N_PATHS      = 50_000
 RISK_GRID    = [0.02, 0.04, 0.06, 0.10, 0.15, 0.20, 0.25, 0.30]
 SEED         = 7
 
+# -- Horizon sweep: "how long does $10k actually take at a SURVIVABLE risk?" ----
+# Same bootstrap method, but hold risk safe and let TIME be the lever.
+HORIZON_GRID = [6, 12, 18, 24, 36]      # months
+SAFE_RISKS   = [0.04, 0.06]             # the near-zero-ruin live settings
+
 S4_SLOTS = [
     ("rsi_50",    2,  True), ("macd_adx",  6,  True), ("rsi_ema", 10, True),
     ("ema_cross", 5,  False), ("rsi_50",    7,  False), ("keltner", 14, False),
@@ -144,7 +149,43 @@ def main() -> None:
     print("  faster. The 'finish >=$10k' column is the honest one — peaks you give back")
     print("  don't pay you. There is no risk level that makes 20x in 6mo likely AND safe.")
     print(_bar("="))
+
+    _horizon_sweep(pool, tpm, rng)
     print()
+
+
+def _horizon_sweep(pool: np.ndarray, tpm: float, rng) -> None:
+    """At SURVIVABLE risk, let TIME be the lever. For each (risk, horizon) report
+    median balance and P(>=$10k) — shows when $10k actually becomes likely if you
+    stop forcing it into 6 months."""
+    print()
+    print(_bar("="))
+    print("  TIME IS THE LEVER — same edge, survivable risk, longer horizons")
+    print(f"  $500 start | {N_PATHS:,} paths | ~{tpm:.1f} trades/month (one-position)")
+    print(_bar("="))
+    print(f"  {'risk':>5} {'horizon':>9} {'trades':>7} {'medianFinal':>12} "
+          f"{'p10':>9} {'p90':>11} {'P(>=$10k)':>10} {'P(RUIN)':>9}")
+    print(_bar())
+    for risk in SAFE_RISKS:
+        for months in HORIZON_GRID:
+            n_trades = max(int(round(tpm * months)), 1)
+            draws = rng.choice(pool, size=(N_PATHS, n_trades), replace=True)
+            mult  = np.clip(1.0 + risk * draws, 1e-6, None)
+            paths = START * np.cumprod(mult, axis=1)
+            final = paths[:, -1]
+            low   = paths.min(axis=1)
+            p_final10 = (final >= TARGET).mean() * 100
+            p_ruin    = (low   <= RUIN_LEVEL).mean() * 100
+            med = np.median(final)
+            p10 = np.percentile(final, 10)
+            p90 = np.percentile(final, 90)
+            print(f"  {risk*100:>4.0f}% {months:>7}mo {n_trades:>7} {med:>12,.0f} "
+                  f"{p10:>9,.0f} {p90:>11,.0f} {p_final10:>9.1f}% {p_ruin:>8.1f}%")
+        print(_bar())
+    print("  Read: at a risk where RUIN stays ~0%, $10k is a question of HOW LONG, not")
+    print("  how reckless. Find the row where P(>=$10k) crosses ~50% — that's your honest")
+    print("  ETA to the goal with an account that survives the whole way.")
+    print(_bar("="))
 
 
 if __name__ == "__main__":
