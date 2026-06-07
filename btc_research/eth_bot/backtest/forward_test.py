@@ -138,6 +138,7 @@ def _simulate_onepos(cand: pd.DataFrame) -> dict:
         records.append({
             "entry_time": et, "strategy": t["strategy"],
             "hour_utc": int(t["hour_utc"]), "outcome": t["outcome"],
+            "direction": t.get("direction", "?"),
             "r": r_val, "pnl": pnl, "balance": balance,
         })
 
@@ -243,6 +244,20 @@ def _diagnostics(window_trades: pd.DataFrame) -> None:
     verdict = ("filter HELPED" if on["final"] > off["final"]
                else "filter HURT" if on["final"] < off["final"] else "no difference")
     print(f"    => in this window the {verdict}.")
+
+    # 4. LONG vs SHORT split of the trades we actually took — did the bot fight
+    #    the macro trend? (counter-trend longs in a bear = the prime suspect)
+    sim = on["sim"]
+    if not sim.empty and "direction" in sim.columns:
+        print()
+        print(f"  Long vs Short (taken trades, filter ON):")
+        print(f"    {'dir':<6} {'N':>3} {'W':>3} {'WR%':>6} {'TotR':>7} {'P&L $':>10}")
+        for d, g in sim.groupby("direction"):
+            n = len(g); w = (g["outcome"] == "win").sum()
+            print(f"    {str(d):<6} {n:>3} {w:>3} {w/n*100:>5.1f}% "
+                  f"{g['r'].sum():>+7.2f} {g['pnl'].sum():>+10.2f}")
+        print(f"    => if longs (counter-trend in a -47% year) bled while shorts won,")
+        print(f"       a higher-timeframe (daily) trend filter is the principled fix.")
     print(_bar("="))
 
 
