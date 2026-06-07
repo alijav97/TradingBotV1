@@ -48,6 +48,17 @@ TRAIL_ATR_MULT   = 2.0
 MAX_HOLD_BARS    = 96
 ADX_THRESHOLD    = 20
 
+# ---- Monte Carlo (PASS 4) ----------------------------------------------------
+MC_PATHS       = 50_000
+MC_HORIZON_MO  = 6
+MC_TARGET_8K   = 8_000.0
+MC_TARGET_10K  = 10_000.0
+MC_RUIN        = 50.0          # -90% from $500 = effectively dead
+MC_SEED        = 7
+MC_RISK_GRID   = [0.02, 0.04, 0.06, 0.10, 0.15, 0.20]   # for the R-pool risk sweep
+MC_HORIZON_GRID = [6, 9, 12, 18, 24]                      # ETA-to-$10k sweep
+MC_SAFE_RISK   = 0.06
+
 # Hour-sets to try (the BTC strategy was tuned for BTC's hours — find ETH's).
 HOUR_SETS = {
     "BTC hours [1,2,3,8]":      [1, 2, 3, 8],
@@ -245,6 +256,95 @@ def _stats(trades: list[dict]) -> dict:
                 maxcl=maxcl, pf=round(pf, 2), pos_mo=pos_mo, tot_mo=len(monthly))
 
 
+def _per_trade_multipliers(trades: list[dict]) -> np.ndarray:
+    """Reconstruct each trade's equity multiplier (balance_after / balance_before).
+    This bakes in the ACTUAL ADX-split risk the strategy used — scale-invariant, so
+    valid to bootstrap regardless of balance level."""
+    mults = []
+    prev = STARTING_BALANCE
+    for t in trades:
+        ba = float(t["balance_after"])
+        if prev > 0:
+            mults.append(ba / prev)
+        prev = ba
+    return np.asarray(mults, dtype=float)
+
+
+def _trades_per_month(trades: list[dict]) -> float:
+    if len(trades) < 2:
+        return float(len(trades))
+    t0 = pd.Timestamp(trades[0]["open_time"])
+    t1 = pd.Timestamp(trades[-1]["open_time"])
+    months = max((t1 - t0).days / 30.44, 1.0)
+    return len(trades) / months
+
+
+def _monte_carlo(trades: list[dict], hs_name: str, rp_name: str) -> None:
+    """Bootstrap THIS strategy's real outcomes to answer $8k/$10k-in-6mo honestly."""
+    if len(trades) < 30:
+        print("  (too few trades for a meaningful Monte Carlo)"); return
+
+    r_pool = np.asarray([float(t["r_multiple"]) for t in trades], dtype=float)
+    mult_pool = _per_trade_multipliers(trades)          # actual-risk equity returns
+    tpm = _trades_per_month(trades)
+    n_tr = max(int(round(tpm * MC_HORIZON_MO)), 1)
+    rng = np.random.default_rng(MC_SEED)
+    wr = (r_pool > 0).mean() * 100
+
+    print()
+    print(_bar("="))
+    print("  PASS 4 — MONTE CARLO on THIS strategy's real outcomes (honest $10k odds)")
+    print(f"  config: {hs_name} | {rp_name} | pool={len(r_pool)} trades | "
+          f"WR {wr:.1f}% | avg {r_pool.mean():+.2f}R")
+    print(f"  $500 start | {MC_HORIZON_MO}-month horizon | ~{tpm:.1f} trades/mo "
+          f"-> {n_tr} trades/path | {MC_PATHS:,} paths")
+    print(_bar("="))
+
+    # ---- Part A: the strategy EXACTLY as-is (real ADX-split sizing) -----------
+    draws = rng.choice(mult_pool, size=(MC_PATHS, n_tr), replace=True)
+    paths = STARTING_BALANCE * np.cumprod(draws, axis=1)
+    final = paths[:, -1]; low = paths.min(axis=1)
+    print("  AS-IS (the strategy's own 3/2/3 ADX-split sizing):")
+    print(f"    median final ${np.median(final):>10,.0f} | p10 ${np.percentile(final,10):>9,.0f} "
+          f"| p90 ${np.percentile(final,90):>11,.0f}")
+    print(f"    P(>=$8k) {(final>=MC_TARGET_8K).mean()*100:>5.1f}%  "
+          f"P(>=$10k) {(final>=MC_TARGET_10K).mean()*100:>5.1f}%  "
+          f"P(RUIN<=$50) {(low<=MC_RUIN).mean()*100:>5.1f}%")
+
+    # ---- Part B: R-pool risk sweep (what flat risk would it take?) ------------
+    print()
+    print("  RISK SWEEP (bootstrap R, apply flat risk/trade -> see the tradeoff):")
+    print(f"    {'risk':>6} {'medianFinal':>12} {'p10':>9} {'p90':>11} "
+          f"{'P(>=$8k)':>9} {'P(>=$10k)':>10} {'P(RUIN)':>9}")
+    for risk in MC_RISK_GRID:
+        d = rng.choice(r_pool, size=(MC_PATHS, n_tr), replace=True)
+        m = np.clip(1.0 + risk * d, 1e-6, None)
+        p = STARTING_BALANCE * np.cumprod(m, axis=1)
+        f = p[:, -1]; lo = p.min(axis=1)
+        tag = "  <- safe-ish" if abs(risk - MC_SAFE_RISK) < 1e-9 else ""
+        print(f"    {risk*100:>5.0f}% {np.median(f):>12,.0f} {np.percentile(f,10):>9,.0f} "
+              f"{np.percentile(f,90):>11,.0f} {(f>=MC_TARGET_8K).mean()*100:>8.1f}% "
+              f"{(f>=MC_TARGET_10K).mean()*100:>9.1f}% {(lo<=MC_RUIN).mean()*100:>8.1f}%{tag}")
+
+    # ---- Part C: time-as-lever at safe risk ----------------------------------
+    print()
+    print(f"  HORIZON SWEEP at {MC_SAFE_RISK*100:.0f}% flat risk (when does $10k get likely?):")
+    print(f"    {'horizon':>8} {'trades':>7} {'medianFinal':>12} {'P(>=$10k)':>10} {'P(RUIN)':>9}")
+    for mo in MC_HORIZON_GRID:
+        nt = max(int(round(tpm * mo)), 1)
+        d = rng.choice(r_pool, size=(MC_PATHS, nt), replace=True)
+        m = np.clip(1.0 + MC_SAFE_RISK * d, 1e-6, None)
+        p = STARTING_BALANCE * np.cumprod(m, axis=1)
+        f = p[:, -1]; lo = p.min(axis=1)
+        print(f"    {mo:>6}mo {nt:>7} {np.median(f):>12,.0f} "
+              f"{(f>=MC_TARGET_10K).mean()*100:>9.1f}% {(lo<=MC_RUIN).mean()*100:>8.1f}%")
+    print(_bar("="))
+    print("  Read: Part A is the honest 'run it as-is' answer. The risk sweep shows what")
+    print("  flat risk $8k/$10k would demand AND the ruin it costs. P(RUIN) is the veto —")
+    print("  no $10k path is worth a double-digit chance of zeroing the account.")
+    print(_bar("="))
+
+
 def main() -> None:
     df = _load_eth()
     atr, ema200, adx = _indicators(df)
@@ -330,6 +430,10 @@ def main() -> None:
     print("  VERDICT RULE: wire VBSwing into ETH only if it beats S4 (AvgR, % profitable")
     print("  months, MaxDD) in BOTH train AND test — not just the flattering last-2yr.")
     print(_bar("="))
+
+    # ---- Pass 4: Monte Carlo on the best config's real outcomes --------------
+    full_trades = simulate(df, atr, ema200, adx, strat, hours, rp)
+    _monte_carlo(full_trades, hs_name, rp_name)
     print()
 
 
