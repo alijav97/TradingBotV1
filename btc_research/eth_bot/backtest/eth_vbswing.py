@@ -108,8 +108,16 @@ def _indicators(df: pd.DataFrame):
 
 
 def simulate(df, atr, ema200, adx, strategy, hours, risk_tuple,
-             date_start=None, date_end=None) -> list[dict]:
-    """One-position bar-by-bar sim on ETH. Fresh $500, compounded. Returns trades."""
+             date_start=None, date_end=None,
+             cb_losses=None, cb_pause_days=0.0, cb_throttle=False) -> list[dict]:
+    """One-position bar-by-bar sim on ETH. Fresh $500, compounded. Returns trades.
+
+    Optional circuit breaker (damage control):
+      cb_losses    : trip after this many CONSECUTIVE losing trades (None = off).
+                     Counter resets only on a WINNING trade.
+      cb_pause_days: HARD-PAUSE mode — skip ALL entries for this many days after a trip.
+      cb_throttle  : THROTTLE mode — instead of pausing, cut risk x0.5 until next win.
+    """
     r_early, r_trans, r_strong = risk_tuple
     ts = df.index
     H = df["high"].astype(float).values
@@ -120,6 +128,9 @@ def simulate(df, atr, ema200, adx, strategy, hours, risk_tuple,
     balance = STARTING_BALANCE
     trades: list[dict] = []
     open_t = None
+    consec_losses = 0
+    pause_until = pd.Timestamp.min
+    risk_mult = 1.0
 
     for i in range(220, len(df)):
         bt = ts[i]
@@ -179,13 +190,28 @@ def simulate(df, atr, ema200, adx, strategy, hours, risk_tuple,
             open_t["r_multiple"]    = round(open_t.get("r_running", 0) + r_, 2)
             open_t["balance_after"] = round(balance, 2)
             open_t["exit_reason"]   = ex
+            xt = bt
             trades.append(open_t)
             open_t = None
+
+            # ── circuit breaker bookkeeping ──────────────────────────────────
+            if trades[-1]["pnl_usd"] <= 0:
+                consec_losses += 1
+            else:
+                consec_losses = 0
+                risk_mult = 1.0
+            if cb_losses is not None and consec_losses >= cb_losses:
+                if cb_throttle:
+                    risk_mult = 0.5
+                else:
+                    pause_until = xt + pd.Timedelta(days=cb_pause_days)
 
         if open_t is not None:
             continue
 
         # ── entry gate ───────────────────────────────────────────────────────
+        if bt < pause_until:
+            continue
         if hr not in hours:
             continue
         adx_now = float(adx[i]); ema_now = float(ema200[i])
@@ -205,7 +231,7 @@ def simulate(df, atr, ema200, adx, strategy, hours, risk_tuple,
             if adx_now >= 40:   risk_pct = r_strong
             elif adx_now <= 25: risk_pct = r_early
             else:               risk_pct = r_trans
-            ru   = round(balance * risk_pct, 2)
+            ru   = round(balance * risk_pct * risk_mult, 2)
             lots = ru / sl_d
             tp1r = sig.get("tp1_rr", TP1_RR_DEFAULT)
             tp2r = sig.get("tp2_rr", TP2_RR_DEFAULT)
