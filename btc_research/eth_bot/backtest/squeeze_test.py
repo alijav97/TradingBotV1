@@ -83,15 +83,19 @@ def _squeeze_series(eth: pd.DataFrame) -> pd.DataFrame:
     kc_up = kc_mid + KC_ATR * atr
     kc_lo = kc_mid - KC_ATR * atr
 
-    squeeze_on = (bb_up < kc_up) & (bb_lo > kc_lo)
+    squeeze_on = ((bb_up < kc_up) & (bb_lo > kc_lo)).fillna(False).astype(bool)
     bandwidth  = (bb_up - bb_lo) / bb_mid.replace(0, np.nan)
     comp_ratio = bandwidth / bandwidth.rolling(BANDWIDTH_AVG).mean()
 
+    # shift introduces NaN -> recast to bool so unary ~ works
+    sq1 = squeeze_on.shift(1).fillna(False).astype(bool)   # prior bar compressed?
+    sq2 = squeeze_on.shift(2).fillna(False).astype(bool)   # two bars back
+
     out = pd.DataFrame({
-        "time":           e["time"],
-        "squeeze_prev":   squeeze_on.shift(1),                  # prior bar compressed?
-        "comp_ratio_prev": comp_ratio.shift(1),                 # prior bar bandwidth ratio
-        "released":       (squeeze_on.shift(2) & ~squeeze_on.shift(1)),  # just released
+        "time":            e["time"],
+        "squeeze_prev":    sq1,
+        "comp_ratio_prev": comp_ratio.shift(1),             # prior bar bandwidth ratio
+        "released":        sq2 & ~sq1,                       # squeeze just turned off
     })
     return out
 
