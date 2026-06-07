@@ -49,6 +49,15 @@ SEED         = 7
 HORIZON_GRID = [6, 12, 18, 24, 36]      # months
 SAFE_RISKS   = [0.04, 0.06]             # the near-zero-ruin live settings
 
+# -- Frequency sweep: "can CLUBBING strategies (more trades/month) reach $8k?" --
+# At fixed safe risk + 6mo horizon, raise trades/month and see what target it
+# unlocks. Each extra trade/month ~= clubbing another orthogonal edge as good as
+# S4. OPTIMISTIC ceiling: assumes clubbed edges are independent & equally good
+# (real clubbed ETH strategies are positively correlated -> worse than this).
+TARGET3      = 8_000.0
+FREQ_GRID    = [4.2, 6, 8, 12, 16, 20]  # trades/month (4.2 = current one-position)
+FREQ_RISK    = 0.06                       # safe-ish live risk for the sweep
+
 S4_SLOTS = [
     ("rsi_50",    2,  True), ("macd_adx",  6,  True), ("rsi_ema", 10, True),
     ("ema_cross", 5,  False), ("rsi_50",    7,  False), ("keltner", 14, False),
@@ -151,6 +160,7 @@ def main() -> None:
     print(_bar("="))
 
     _horizon_sweep(pool, tpm, rng)
+    _frequency_sweep(pool, rng)
     print()
 
 
@@ -185,6 +195,44 @@ def _horizon_sweep(pool: np.ndarray, tpm: float, rng) -> None:
     print("  Read: at a risk where RUIN stays ~0%, $10k is a question of HOW LONG, not")
     print("  how reckless. Find the row where P(>=$10k) crosses ~50% — that's your honest")
     print("  ETA to the goal with an account that survives the whole way.")
+    print(_bar("="))
+
+
+def _frequency_sweep(pool: np.ndarray, rng) -> None:
+    """CLUBBING test: at fixed safe risk + 6mo, raise trades/month and see which
+    target it unlocks. OPTIMISTIC — assumes each added trade is an independent
+    draw from the SAME good edge (real clubbed ETH edges are correlated, so the
+    true result is worse). Shows the frequency $8k/$10k would demand."""
+    print()
+    print(_bar("="))
+    print(f"  CAN CLUBBING REACH IT? — more trades/month at {FREQ_RISK*100:.0f}% risk, "
+          f"{HORIZON_MONTHS}mo (OPTIMISTIC ceiling)")
+    print(f"  Each +1 trade/month ~= clubbing another edge as good as S4 AND "
+          f"uncorrelated (generous)")
+    print(_bar("="))
+    print(f"  {'trades/mo':>9} {'trades':>7} {'medianFinal':>12} {'p10':>9} {'p90':>11} "
+          f"{'P(>=$8k)':>9} {'P(>=$10k)':>10} {'P(RUIN)':>9}")
+    print(_bar())
+    for freq in FREQ_GRID:
+        n_trades = max(int(round(freq * HORIZON_MONTHS)), 1)
+        draws = rng.choice(pool, size=(N_PATHS, n_trades), replace=True)
+        mult  = np.clip(1.0 + FREQ_RISK * draws, 1e-6, None)
+        paths = START * np.cumprod(mult, axis=1)
+        final = paths[:, -1]
+        low   = paths.min(axis=1)
+        p8  = (final >= TARGET3).mean() * 100
+        p10 = (final >= TARGET).mean() * 100
+        p_ruin = (low <= RUIN_LEVEL).mean() * 100
+        med = np.median(final)
+        q10 = np.percentile(final, 10)
+        q90 = np.percentile(final, 90)
+        tag = "  <- current" if abs(freq - 4.2) < 0.5 else ""
+        print(f"  {freq:>8.1f}  {n_trades:>7} {med:>12,.0f} {q10:>9,.0f} {q90:>11,.0f} "
+              f"{p8:>8.1f}% {p10:>9.1f}% {p_ruin:>8.1f}%{tag}")
+    print(_bar())
+    print("  Read: find the trades/month where P(>=$8k) gets respectable. That many")
+    print("  trades = that many GOOD, UNCORRELATED clubbed strategies you'd need to")
+    print("  build. And this is the generous ceiling — correlated ETH edges do worse.")
     print(_bar("="))
 
 
