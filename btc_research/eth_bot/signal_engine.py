@@ -47,9 +47,17 @@ from btc_research.eth_bot.strategy.eth_combined import ETHStrategy, get_risk_pct
 logger = logging.getLogger(__name__)
 
 _ETH_SYMBOL = "ETHUSD"
+_BTC_SYMBOL = "BTCUSD"
 _TIMEFRAME  = "H1"
 _BAR_COUNT  = 300
 _MIN_BARS   = 220   # EMA200 needs at least 200 bars
+
+# Slots that the $70k backtest (realistic_backtest S4_SLOTS, btc_req=True) trades
+# ONLY when BTC is trending the same direction as the ETH signal. These map to:
+#   H02 → Path A (rsi_50)   H06 → Path B (macd_adx)   H10 → Path C (rsi_ema)
+# All other live hours (5, 7, 14, 15) are btc_req=False in the backtest, so they
+# are NOT gated. Keep this set in sync with the True flags in S4_SLOTS.
+_BTC_ALIGN_HOURS = frozenset({2, 6, 10})
 
 
 def _calc_adx(df: pd.DataFrame, period: int = 14) -> float:
@@ -186,6 +194,17 @@ class ETHSignalEngine:
 
         if not result.get("signal"):
             logger.info("  → SKIP: %s", result.get("reason", "no signal"))
+            return None
+
+        # ── BTC same-bar alignment filter ───────────────────────────────────────
+        # The $70k backtest only counts H02/H06/H10 signals when BTC is trending
+        # the same way as the ETH trade (S4_SLOTS btc_req=True). Match it live so
+        # the bot trades the exact config the backtest models.
+        if now.hour in _BTC_ALIGN_HOURS and not self._btc_aligned(direction):
+            logger.info(
+                "  → SKIP: BTC not aligned with %s (H%02d requires BTC same-bar trend)",
+                direction.upper(), now.hour,
+            )
             return None
 
         # ── Risk sizing ───────────────────────────────────────────────────────
@@ -334,6 +353,42 @@ class ETHSignalEngine:
             return (balance - peak) / peak <= THROTTLE_DD_TRIGGER
         except Exception as exc:
             logger.debug("equity throttle check failed (full size): %s", exc)
+            return False
+
+    def _btc_aligned(self, direction: str) -> bool:
+        """
+        BTC same-bar trend alignment, matching run_backtest._btc_aligned.
+
+        Fetches the latest BTCUSD H1 window, computes BTC EMA200 (same formula as
+        the ETH EMA200 filter and the backtest's _ema), and returns True when BTC
+        is on the same side of its EMA200 as the ETH trade direction:
+          LONG  ETH  → BTC close > BTC EMA200
+          SHORT ETH  → BTC close < BTC EMA200
+
+        On any data error this returns False (fail-safe: skip the trade rather than
+        take a signal the backtest would have excluded).
+        """
+        try:
+            btc = self._feed.get_ohlcv(_BTC_SYMBOL, _TIMEFRAME, _BAR_COUNT)
+            if btc is None or len(btc) < _MIN_BARS:
+                logger.warning(
+                    "BTC alignment: insufficient BTC bars (got %d) — skipping signal",
+                    len(btc) if btc is not None else 0,
+                )
+                return False
+            close_s   = btc["close"].astype(float)
+            btc_ema   = float(close_s.ewm(span=EMA200_PERIOD, adjust=False).mean().iloc[-1])
+            btc_close = float(close_s.iloc[-1])
+            above     = btc_close > btc_ema
+            aligned   = (above and direction == "long") or (not above and direction == "short")
+            logger.info(
+                "  BTC alignment: close=%.2f ema200=%.2f (%s) vs ETH %s → %s",
+                btc_close, btc_ema, "above" if above else "below",
+                direction.upper(), "ALIGNED" if aligned else "NOT aligned",
+            )
+            return aligned
+        except Exception as exc:
+            logger.warning("BTC alignment check failed (skipping signal): %s", exc)
             return False
 
     def _get_balance(self) -> float:
